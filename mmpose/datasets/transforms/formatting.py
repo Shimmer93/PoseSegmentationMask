@@ -128,7 +128,8 @@ class PackPoseInputs(BaseTransform):
         heatmap_mask='heatmap_mask',
         heatmap_weights='heatmap_weights',
         displacements='displacements',
-        displacement_weights='displacement_weights')
+        displacement_weights='displacement_weights',
+        masks='masks',)
 
     # items in `label_mapping_table` will be packed into
     # PoseDataSample.gt_instance_labels and converted to Tensor. These items

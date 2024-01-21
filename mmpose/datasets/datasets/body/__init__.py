@@ -1,6 +1,7 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 from .aic_dataset import AicDataset
 from .coco_dataset import CocoDataset
+from .coco_psm_dataset import CocoPSMDataset
 from .crowdpose_dataset import CrowdPoseDataset
 from .exlpose_dataset import ExlposeDataset
 from .humanart21_dataset import HumanArt21Dataset
@@ -14,8 +15,25 @@ from .posetrack18_dataset import PoseTrack18Dataset
 from .posetrack18_video_dataset import PoseTrack18VideoDataset
 
 __all__ = [
-    'CocoDataset', 'MpiiDataset', 'MpiiTrbDataset', 'AicDataset',
+    'CocoDataset', 'CocoPSMDataset', 'MpiiDataset', 'MpiiTrbDataset', 'AicDataset',
     'CrowdPoseDataset', 'OCHumanDataset', 'MhpDataset', 'PoseTrack18Dataset',
     'JhmdbDataset', 'PoseTrack18VideoDataset', 'HumanArtDataset',
     'HumanArt21Dataset', 'ExlposeDataset'
 ]
+
+str_to_dataset = {
+    'CocoDataset': CocoDataset,
+    'CocoPSMDataset': CocoPSMDataset,
+    'MpiiDataset': MpiiDataset,
+    'MpiiTrbDataset': MpiiTrbDataset,
+    'AicDataset': AicDataset,
+    'CrowdPoseDataset': CrowdPoseDataset,
+    'OCHumanDataset': OCHumanDataset,
+    'MhpDataset': MhpDataset,
+    'PoseTrack18Dataset': PoseTrack18Dataset,
+    'JhmdbDataset': JhmdbDataset,
+    'PoseTrack18VideoDataset': PoseTrack18VideoDataset,
+    'HumanArtDataset': HumanArtDataset,
+    'HumanArt21Dataset': HumanArt21Dataset,
+    'ExlposeDataset': ExlposeDataset
+}
