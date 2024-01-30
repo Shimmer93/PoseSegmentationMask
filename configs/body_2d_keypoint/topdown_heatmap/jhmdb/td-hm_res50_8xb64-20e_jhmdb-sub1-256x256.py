@@ -59,7 +59,7 @@ load_from = 'https://download.openmmlab.com/mmpose/top_down/resnet/res50_mpii_25
 # base dataset settings
 dataset_type = 'JhmdbDataset'
 data_mode = 'topdown'
-data_root = 'data/jhmdb/'
+data_root = '/scratch/PI/cqf/har_data/jhmdb/'
 
 # pipelines
 train_pipeline = [

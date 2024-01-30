@@ -132,7 +132,7 @@ train_dataloader = dict(
         pipeline=train_pipeline,
     ))
 val_dataloader = dict(
-    batch_size=4,
+    batch_size=32,
     num_workers=4,
     persistent_workers=True,
     drop_last=False,
@@ -153,6 +153,6 @@ test_dataloader = val_dataloader
 # evaluators
 val_evaluator = dict(
     type='CocoMetricPSM',
-    outfile_prefix='logs/coco/td-hm_hrnet-w32_8xb64-210e_coco-256x192',
+    outfile_prefix='logs/coco/td-hm_ViTPose-small_8xb64-210e_coco-256x192',
     ann_file=data_root + 'annotations/person_keypoints_val2017.json')
 test_evaluator = val_evaluator

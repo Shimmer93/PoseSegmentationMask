@@ -1,4 +1,21 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+import copy
+import os.path as osp
+from copy import deepcopy
+from itertools import chain, filterfalse, groupby
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
+
+import numpy as np
+from mmengine.dataset import BaseDataset, force_full_init
+from mmengine.fileio import exists, get_local_path, load
+from mmengine.logging import MessageHub
+from mmengine.utils import is_list_of
+from xtcocotools.coco import COCO
+
+from mmpose.registry import DATASETS
+from mmpose.structures.bbox import bbox_xywh2xyxy
+from ..utils import parse_pose_metainfo
+
 import os.path as osp
 from typing import Optional
 
@@ -75,6 +92,56 @@ class JhmdbDataset(BaseCocoStyleDataset):
 
     METAINFO: dict = dict(from_file='configs/_base_/datasets/jhmdb.py')
 
+    def _load_annotations(self) -> Tuple[List[dict], List[dict]]:
+        """Load data from annotations in COCO format."""
+
+        assert exists(self.ann_file), (
+            f'Annotation file `{self.ann_file}`does not exist')
+
+        with get_local_path(self.ann_file) as local_path:
+            self.coco = COCO(local_path)
+        # set the metainfo about categories, which is a list of dict
+        # and each dict contains the 'id', 'name', etc. about this category
+        if 'categories' in self.coco.dataset:
+            self._metainfo['CLASSES'] = self.coco.loadCats(
+                self.coco.getCatIds())
+
+        instance_list = []
+        image_list = []
+
+        for img_id in self.coco.getImgIds():
+            if img_id % self.sample_interval != 0:
+                continue
+            img = self.coco.loadImgs(img_id)[0]
+
+            img_path = osp.join(self.data_prefix['img'], img['file_name'])
+            frm_id = int(osp.basename(img_path).split('.')[0])
+            nframes = img['nframes']
+            frm_id2 = frm_id + 1 if frm_id < nframes else frm_id
+            img_id2 = img_id + 1 if frm_id < nframes else img_id
+            img_path2 = img_path.replace(f'{frm_id:05d}', f'{frm_id2:05d}')
+
+            img.update({
+                'img_id': img_id,
+                'img_path': img_path,
+                'img_id2': img_id2,
+                'img_path2': img_path2,
+            })
+            image_list.append(img)
+
+            ann_ids = self.coco.getAnnIds(imgIds=img_id)
+            for ann in self.coco.loadAnns(ann_ids):
+
+                instance_info = self.parse_data_info(
+                    dict(raw_ann_info=ann, raw_img_info=img))
+
+                # skip invalid instance annotation.
+                if not instance_info:
+                    continue
+
+                instance_list.append(instance_info)
+        return instance_list, image_list
+
     def parse_data_info(self, raw_data_info: dict) -> Optional[dict]:
         """Parse raw COCO annotation of an instance.
 
@@ -92,8 +159,6 @@ class JhmdbDataset(BaseCocoStyleDataset):
 
         ann = raw_data_info['raw_ann_info']
         img = raw_data_info['raw_img_info']
-
-        print(ann.keys(), img.keys())
 
         img_path = osp.join(self.data_prefix['img'], img['file_name'])
         img_w, img_h = img['width'], img['height']
@@ -126,6 +191,8 @@ class JhmdbDataset(BaseCocoStyleDataset):
         data_info = {
             'img_id': ann['image_id'],
             'img_path': img_path,
+            'img_id2': img['img_id2'],
+            'img_path2': img['img_path2'],
             'bbox': bbox,
             'bbox_score': np.ones(1, dtype=np.float32),
             'num_keypoints': num_keypoints,

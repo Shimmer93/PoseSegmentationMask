@@ -55,11 +55,14 @@ def skeleton_to_body_mask(keypoints, links, height, width):
     masks = np.zeros((keypoints.shape[0], height, width))
     for i in range(keypoints.shape[0]):
         for kp_pair in links:
+            if kp_pair[0] + kp_pair[1] == 10 or kp_pair[0] + kp_pair[1] == 8:
+                continue
             start = keypoints[i, kp_pair[0], :2].astype(np.int32)
             end = keypoints[i, kp_pair[1], :2].astype(np.int32)
-            if start[0] < 0 or start[0] >= width or start[1] < 0 or start[1] >= height:
+            if start[0] < 0 or start[0] >= width or start[1] < 0 or start[1] >= height or \
+                end[0] < 0 or end[0] >= width or end[1] < 0 or end[1] >= height:
                 continue
-            draw_line(masks[i], start, end, value=1, overlength=0.2)
+            draw_line(masks[i], start, end, value=1, overlength=0.1)
         masks[i] = gaussian_filter(masks[i], sigma=3, radius=1)
     mask = np.sum(masks, axis=0)
     return mask
@@ -98,7 +101,8 @@ class PoseSegmentationMask(BaseKeypointCodec):
                  sigma: float,
                  dataset_type: str,
                  unbiased: bool = False,
-                 blur_kernel_size: int = 3) -> None:
+                 blur_kernel_size: int = 3,
+                 use_flow: bool = False) -> None:
         super().__init__()
         self.input_size = input_size
         self.sigma = sigma
@@ -106,7 +110,7 @@ class PoseSegmentationMask(BaseKeypointCodec):
 
         self.blur_kernel_size = blur_kernel_size
         self.links = str_to_dataset[dataset_type]._load_metainfo()["skeleton_links"]
-        
+        self.use_flow = use_flow
 
     def encode(self,
                keypoints: np.ndarray,
@@ -166,7 +170,9 @@ class PoseSegmentationMask(BaseKeypointCodec):
         masks = encoded.copy()
         K, H, W = masks.shape
 
-        keypoints, scores = get_heatmap_maximum(masks[1:,...])
+        masks_joints = masks[1:-1,...] if self.use_flow else masks[1:,...]
+
+        keypoints, scores = get_heatmap_maximum(masks_joints)
 
         # Unsqueeze the instance dimension for single-instance results
         keypoints, scores = keypoints[None], scores[None]
@@ -176,10 +182,10 @@ class PoseSegmentationMask(BaseKeypointCodec):
         if self.unbiased:
             # Alleviate biased coordinate
             keypoints = refine_keypoints_dark(
-                keypoints, masks[1:,...], blur_kernel_size=self.blur_kernel_size)
+                keypoints, masks_joints, blur_kernel_size=self.blur_kernel_size)
 
         else:
-            keypoints = refine_keypoints(keypoints, masks[1:,...])
+            keypoints = refine_keypoints(keypoints, masks_joints)
 
         # Restore the keypoint scale
         # keypoints = keypoints * self.scale_factor

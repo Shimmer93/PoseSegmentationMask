@@ -3,6 +3,7 @@ from ..base_head import BaseHead
 
 from typing import Optional, Sequence, Tuple, Union
 import time
+import os
 
 import torch
 import torch.nn.functional as F
@@ -10,6 +11,7 @@ import numpy as np
 from mmcv.cnn import build_conv_layer, build_upsample_layer
 from mmengine.structures import PixelData
 from torch import Tensor, nn
+import matplotlib.pyplot as plt
 
 from mmpose.evaluation.functional import pose_pck_accuracy
 from mmpose.models.utils.tta import flip_heatmaps
@@ -38,6 +40,30 @@ def get_min_max_from_skeletons(skls, H, W, padding=10):
     x_mins = torch.clamp(x_mins - padding, min=0)
     x_maxs = torch.clamp(x_maxs + padding, max=W)
     
+    return y_mins, y_maxs, x_mins, x_maxs
+
+def get_min_max_from_masks(masks):
+
+    # masks: B H W
+    B = masks.size(0)
+    y_mins = []
+    y_maxs = []
+    x_mins = []
+    x_maxs = []
+
+    for i in range(B):
+        y_nonzeros = torch.nonzero(torch.sum(masks[i], dim=1))
+        x_nonzeros = torch.nonzero(torch.sum(masks[i], dim=0))
+        y_mins.append(torch.min(y_nonzeros).item() if y_nonzeros.numel() > 0 else -1)
+        y_maxs.append(torch.max(y_nonzeros).item() if y_nonzeros.numel() > 0 else -1)
+        x_mins.append(torch.min(x_nonzeros).item() if x_nonzeros.numel() > 0 else -1)
+        x_maxs.append(torch.max(x_nonzeros).item() if x_nonzeros.numel() > 0 else -1)
+        
+    y_mins = torch.tensor(y_mins, dtype=torch.int)
+    y_maxs = torch.tensor(y_maxs, dtype=torch.int)
+    x_mins = torch.tensor(x_mins, dtype=torch.int)
+    x_maxs = torch.tensor(x_maxs, dtype=torch.int)
+
     return y_mins, y_maxs, x_mins, x_maxs
 
 def point_sample(input, point_coords, **kwargs):
@@ -470,14 +496,17 @@ class BodyMaskHead(ImplicitPointRendMaskHead):
         h = int(hf // self.scale)
         w = int(wf // self.scale)
 
-        y_mins, y_maxs, x_mins, x_maxs = get_min_max_from_skeletons(skls, h, w)
+        # y_mins, y_maxs, x_mins, x_maxs = get_min_max_from_skeletons(skls, h, w)
+        y_mins, y_maxs, x_mins, x_maxs = get_min_max_from_masks(gt_masks)
 
         point_coords = []
         point_labels = []
         for(i, (y_min, y_max, x_min, x_max)) in enumerate(zip(y_mins, y_maxs, x_mins, x_maxs)):
 
             neg_mask = torch.ones((h, w), dtype=torch.bool, device=features.device)
-            neg_mask[y_min:y_max, x_min:x_max] = False
+            if y_min >= 0:
+                assert y_max >= 0 and x_min >= 0 and x_max >= 0
+                neg_mask[y_min:y_max, x_min:x_max] = False
             if torch.sum(neg_mask) == 0:
                 neg_mask[0, 0] = True
             neg_idxs = torch.nonzero(neg_mask).flip(1)
@@ -541,7 +570,8 @@ class JointMaskHead(ImplicitPointRendMaskHead):
         h = int(hf // self.scale)
         w = int(wf // self.scale)
 
-        y_mins, y_maxs, x_mins, x_maxs = get_min_max_from_skeletons(skls, h, w)
+        # y_mins, y_maxs, x_mins, x_maxs = get_min_max_from_skeletons(skls, h, w)
+        y_mins, y_maxs, x_mins, x_maxs = get_min_max_from_masks(gt_masks.sum(dim=1))
 
         point_coords = []
         point_labels = []
@@ -567,7 +597,9 @@ class JointMaskHead(ImplicitPointRendMaskHead):
             num_samples_neg = num_samples_total - num_samples_pos_total
             # neg_mask = (gt_masks[i].sum(dim=0) == 0)
             neg_mask = torch.ones((h, w), dtype=torch.bool, device=features.device)
-            neg_mask[y_min:y_max, x_min:x_max] = False
+            if y_min >= 0:
+                assert y_max >= 0 and x_min >= 0 and x_max >= 0
+                neg_mask[y_min:y_max, x_min:x_max] = False
             if torch.sum(neg_mask) == 0:
                 neg_mask[0, 0] = True
             neg_idxs = torch.nonzero(neg_mask).flip(1)
@@ -582,6 +614,91 @@ class JointMaskHead(ImplicitPointRendMaskHead):
 
             point_coords.append(torch.cat(coords_i, dim=0))
             point_labels.append(torch.cat(labels_i, dim=0))
+
+        point_coords = torch.stack(point_coords, dim=0).to(features.device)
+        point_coords = point_coords / torch.tensor([w-1, h-1], dtype=torch.float, device=features.device).unsqueeze(0)
+        point_labels = torch.stack(point_labels, dim=0).to(features.device)
+
+        return point_coords, point_labels
+    
+class FlowMaskHead(ImplicitPointRendMaskHead):
+    def __init__(self, in_channels, train_num_points, subdivision_steps, scale, \
+                 num_layers, channels, image_feature_enabled, positional_encoding_enabled, num_classes=1):
+        super().__init__(in_channels, train_num_points, subdivision_steps, scale, \
+                 num_layers, channels, image_feature_enabled, positional_encoding_enabled, num_classes)
+
+    def forward(self, features, flows=None):
+        """
+        Args:
+            features: B C H W
+        """
+        if self.training:
+            # parameters = self.parameter_head(self._roi_pooler(features))
+
+            point_coords, point_labels = self._sample_train_points_with_flow(features, flows)
+            point_fine_grained_features = self._point_pooler(features, point_coords)
+            point_logits = self._get_point_logits(
+                point_fine_grained_features, point_coords
+            )
+
+            return point_logits, point_labels
+        else:
+            # parameters = self.parameter_head(self._roi_pooler(features))
+            return self._subdivision_inference(features)
+
+    def _sample_train_points_with_flow(self, features, flows):
+        assert self.training
+
+        hf = features.shape[-2]
+        wf = features.shape[-1]
+
+        h = int(hf // self.scale)
+        w = int(wf // self.scale)
+
+        # with torch.no_grad():
+        #     flows0 = flows.detach().clone()
+        #     flows_norm = torch.norm(flows0, dim=1, keepdim=True)
+        #     flows_norm_max = flows_norm.flatten(2).max(dim=2)[0].unsqueeze(1).unsqueeze(1)
+
+        #     flows1 = flows.detach().clone()
+        #     flows_mean = torch.mean(flows1, dim=(2, 3), keepdim=True)
+        #     flows_centered = flows1 - flows_mean
+        #     flows_centered_norm = torch.norm(flows_centered, dim=1, keepdim=True)
+        #     flows_centered_norm_max = flows_centered_norm.flatten(2).max(dim=2)[0].unsqueeze(1).unsqueeze(1)
+            
+        #     pos_masks1 = (flows_norm > flows_norm_max * 0.8).squeeze(1)
+        #     neg_masks1 = (flows_norm < flows_norm_max * 0.2).squeeze(1)
+        #     pos_masks2 = (flows_centered_norm > flows_centered_norm_max * 0.8).squeeze(1)
+        #     neg_masks2 = (flows_centered_norm < flows_centered_norm_max * 0.2).squeeze(1)
+        #     pos_masks = pos_masks2 & ~neg_masks1
+        #     neg_masks = neg_masks2 & ~pos_masks1
+
+        #     for i in range(len(pos_masks)):
+        #         print(torch.sum(pos_masks[i]), torch.sum(neg_masks[i]))
+
+        flows_mean = torch.mean(flows, dim=(2, 3), keepdim=True)
+        flows_centered = flows - flows_mean
+        flows_centered_norm = torch.norm(flows_centered, dim=1, keepdim=True)
+        flows_centered_norm_max = flows_centered_norm.flatten(2).max(dim=2)[0].unsqueeze(1).unsqueeze(1)
+        
+        pos_masks = (flows_centered_norm > flows_centered_norm_max * 0.8).squeeze(1)
+        neg_masks = (flows_centered_norm < flows_centered_norm_max * 0.2).squeeze(1)
+
+        point_coords = []
+        point_labels = []
+
+        for(i, (pos_mask, neg_mask)) in enumerate(zip(pos_masks, neg_masks)):
+            num_samples = self.mask_point_train_num_points // 2
+            neg_idxs = torch.nonzero(neg_mask).flip(1)
+            while len(neg_idxs) < num_samples:
+                neg_idxs = torch.cat([neg_idxs, neg_idxs], dim=0)
+            neg_idxs = neg_idxs[torch.randperm(len(neg_idxs)),:][:num_samples]
+            pos_idxs = torch.nonzero(pos_mask).flip(1)
+            while len(pos_idxs) < num_samples:
+                pos_idxs = torch.cat([pos_idxs, pos_idxs], dim=0)
+            pos_idxs = pos_idxs[torch.randperm(len(pos_idxs)),:][:num_samples]
+            point_coords.append(torch.cat([neg_idxs, pos_idxs], dim=0))
+            point_labels.append(torch.cat([torch.zeros(num_samples), torch.ones(num_samples)], dim=0))
 
         point_coords = torch.stack(point_coords, dim=0).to(features.device)
         point_coords = point_coords / torch.tensor([w-1, h-1], dtype=torch.float, device=features.device).unsqueeze(0)
@@ -604,11 +721,13 @@ class PointHead(BaseHead):
                  image_feature_enabled: bool = True,
                  pos_enc_enabled: bool = True,
                  scale: float = 1./4.,
+                 use_flow: bool = False,
                  loss: ConfigType = dict(
                      type='MultipleLossWrapper',
                      losses=[
                          dict(type='BodySegTrainLoss', use_target_weight=True),
-                         dict(type='JointSegTrainLoss', use_target_weight=True)
+                         dict(type='JointSegTrainLoss', use_target_weight=True),
+                         dict(type='BodySegTrainLoss', use_target_weight=True),
                      ]),
                  decoder: OptConfigType = None,
                  init_cfg: OptConfigType = None):
@@ -626,6 +745,8 @@ class PointHead(BaseHead):
         else:
             self.decoder = None
         self.flag = True
+        self.flag2 = True
+        self.use_flow = use_flow
 
         self.body_dec = nn.Sequential(
             Conv2d(in_channels, hid_channels, 3, 1, 1, activation=nn.ReLU()),
@@ -641,10 +762,21 @@ class PointHead(BaseHead):
             nn.BatchNorm2d(hid_channels)
         )
 
+        if self.use_flow:
+            self.flow_dec = nn.Sequential(
+                Conv2d(in_channels, hid_channels, 3, 1, 1, activation=nn.ReLU()),
+                nn.BatchNorm2d(hid_channels),
+                Conv2d(hid_channels, hid_channels, 3, 1, 1, activation=nn.ReLU()),
+                nn.BatchNorm2d(hid_channels)
+            )
+
         self.body_head = BodyMaskHead(hid_channels, train_num_points, subdivision_steps, scale, \
                                       num_layers, hid_channels, image_feature_enabled, pos_enc_enabled)
         self.joint_head = JointMaskHead(hid_channels, train_num_points, subdivision_steps, scale, \
                                         num_layers, hid_channels, image_feature_enabled, pos_enc_enabled, out_channels)
+        if self.use_flow:
+            self.flow_head = FlowMaskHead(hid_channels, train_num_points, subdivision_steps, scale, \
+                                        num_layers, hid_channels, image_feature_enabled, pos_enc_enabled)
         
     @property
     def default_init_cfg(self):
@@ -657,7 +789,7 @@ class PointHead(BaseHead):
         ]
         return init_cfg
         
-    def forward(self, feats: Tuple[Tensor], skls=None, gt_masks=None, mode='fit') -> Tensor:
+    def forward(self, feats: Tuple[Tensor], feats_flow=None, skls=None, gt_masks=None, flows=None, mode='fit') -> Tensor:
         """Forward the network. The input is multi scale feature maps and the
         output is the heatmap.
 
@@ -668,42 +800,35 @@ class PointHead(BaseHead):
             Tensor: output heatmap.
         """
         x = feats[-1]
-
-        # for xx in feats:
-        #     print(xx.shape, end=' ')
-        # print()
-
-        # if mode != 'fit':
-        #     print('x: ', x.shape)
-
-        # if mode != 'fit':
-        # print(mode,len(x), x[0].shape)
-
         x_body = self.body_dec(x)
         x_joint = self.joint_dec(x)
+        if self.use_flow:
+            x_flow = self.flow_dec(feats_flow[-1])
 
         skls_ = skls[:,0,...] if skls is not None else None
         gt_masks_body = gt_masks[:,0,...] if gt_masks is not None else None
-        gt_masks_joint = gt_masks[:,1:,...] if gt_masks is not None else None
+        gt_masks_joints = gt_masks[:,1:,...] if gt_masks is not None else None
 
         # print(x_body.shape, x_joint.shape, skls.shape, gt_masks.shape)
         ret_body = self.body_head(x_body, skls=skls_, gt_masks=gt_masks_body, mode=mode)
-        ret_joint = self.joint_head(x_joint, skls=skls_, gt_masks=gt_masks_joint, mode=mode)
+        ret_joint = self.joint_head(x_joint, skls=skls_, gt_masks=gt_masks_joints, mode=mode)
+        if self.use_flow:
+            ret_flow = self.flow_head(x_flow, flows=flows, mode=mode)
 
         if mode == 'fit':
+            if self.use_flow:
+                return ret_body, ret_joint, ret_flow
             return ret_body, ret_joint
         else:
-            # print(ret_body.shape, ret_joint.shape)
-            masks = torch.cat([ret_body, ret_joint], dim=1)
-            if self.flag:
-                # print(masks.shape)
-                self.flag = False
-            return masks
+            if self.use_flow:
+                return torch.cat([ret_body, ret_joint, ret_flow], dim=1)
+            return torch.cat([ret_body, ret_joint], dim=1)
     
     def predict(self,
                 feats: Features,
                 batch_data_samples: OptSampleList,
-                test_cfg: ConfigType = {}) -> Predictions:
+                test_cfg: ConfigType = {},
+                feats_flow: Tuple[Tensor] = None) -> Predictions:
         """Predict results from features.
 
         Args:
@@ -734,7 +859,7 @@ class PointHead(BaseHead):
                 - heatmaps (Tensor): The predicted heatmaps in shape (K, h, w)
         """
 
-        masks = self.forward(feats, mode='inference')
+        masks = self.forward(feats, feats_flow, mode='inference')
 
         preds = self.decode(masks)
 
@@ -752,7 +877,9 @@ class PointHead(BaseHead):
     def loss(self,
              feats: Tuple[Tensor],
              batch_data_samples: OptSampleList,
-             train_cfg: ConfigType = {}) -> dict:
+             train_cfg: ConfigType = {},
+             feats_flow: Tuple[Tensor] =None,
+             flows: Tensor=None) -> dict:
         """Calculate losses from a batch of inputs and data samples.
 
         Args:
@@ -772,12 +899,17 @@ class PointHead(BaseHead):
             [torch.from_numpy(d.gt_instances.keypoints) for d in batch_data_samples])
         keypoint_weights = torch.cat([
             d.gt_instance_labels.keypoint_weights for d in batch_data_samples
-        ])
+        ])  
 
-        (feats_body, labels_body), (feats_joint, labels_joint) = self.forward(feats, keypoints, gt_masks, mode='fit')
+        rets = self.forward(feats, feats_flow, keypoints, gt_masks, flows, mode='fit')
 
-        input_list = [feats_body, feats_joint]
-        target_list = [labels_body, labels_joint]
+        input_list = []
+        target_list = []
+
+        for i, ret in enumerate(rets):
+            # print(i, ret[0].shape, ret[1].shape)
+            input_list.append(ret[0])
+            target_list.append(ret[1])
 
         # calculate losses
         losses = dict()
@@ -786,7 +918,9 @@ class PointHead(BaseHead):
 
         loss_list = self.loss_module(input_list, target_list, keypoint_weights)
 
-        loss = loss_list[0] + loss_list[1]
+        loss = 0
+        for loss_i in loss_list:
+            loss += loss_i
 
         losses.update(loss_kpt=loss)
 
