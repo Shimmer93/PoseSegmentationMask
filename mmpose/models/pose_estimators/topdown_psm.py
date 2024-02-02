@@ -74,7 +74,7 @@ class TopdownPoseEstimatorPSM(BasePoseEstimator):
 
         x0, x1 = inputs[:, :3, ...], inputs[:, 3:, ...]
         with torch.no_grad():
-            flow = self.flownet(x0, x1)[-1]
+            flow = self.flownet(x0, x1)[-1].detach()
             flow_mean = torch.mean(flow, dim=(2, 3), keepdim=True)
             flow_std = torch.std(flow, dim=(2, 3), keepdim=True)
             flow_ = (flow - flow_mean) / flow_std
@@ -131,7 +131,7 @@ class TopdownPoseEstimatorPSM(BasePoseEstimator):
         assert self.with_head, (
             'The model must have head to perform prediction.')
 
-        feats_body, feats_flow = self.extract_feat(inputs)
+        feats_body, feats_flow, _ = self.extract_feat(inputs)
 
         preds = self.head.predict(feats_body, data_samples, test_cfg=self.test_cfg, feats_flow=feats_flow)
 

@@ -132,6 +132,7 @@ class PSMMetricWrapper(BaseMetric):
                  metric_config: Dict,
                  vis: bool = True,
                  save: bool = False,
+                 use_flow: bool = False,
                  outfile_prefix: Optional[str] = None,
                  collect_device: str = 'cpu',
                  prefix: Optional[str] = None,
@@ -141,6 +142,7 @@ class PSMMetricWrapper(BaseMetric):
         self.vis = vis
         self.vis_flag = vis
         self.save = save
+        self.use_flow = use_flow
 
         self.metric = METRICS.build(metric_config)
         self.outfile_prefix = self.metric.outfile_prefix if outfile_prefix is None else outfile_prefix
@@ -153,6 +155,7 @@ class PSMMetricWrapper(BaseMetric):
 
     def process(self, data_batch: Sequence[dict], data_samples: Sequence[dict]) -> None:
         self.metric.process(data_batch, data_samples)
+        self.results.append(self.metric.results[-1])
 
         for data_sample in data_samples:
             if 'pred_fields' in data_sample:
@@ -168,15 +171,24 @@ class PSMMetricWrapper(BaseMetric):
                 input_scale = data_sample['input_scale']
 
                 mask_body = (F.sigmoid(masks[0]) > 0.5).float()
-                mask_joints = (F.sigmoid(masks[1:]) > 0.5).float()
+                mask_body = mask_body.numpy()
+
+                if self.use_flow:
+                    mask_joints = (F.sigmoid(masks[1:-1]) > 0.5).float()
+                    mask_flow = (F.sigmoid(masks[-1]) > 0.5).float()
+                    mask_flow = mask_flow.numpy()
+                else:
+                    mask_joints = (F.sigmoid(masks[1:]) > 0.5).float()
+                    mask_flow = None
+
                 mask_joints_neg = (torch.max(mask_joints, dim=0, keepdim=True)[0] < 0.5).float()
                 mask_joint = torch.argmax(torch.cat([mask_joints_neg, mask_joints], dim=0), dim=0)
-                mask_body = mask_body.numpy()
                 mask_joint = mask_joint.numpy()
                 mask_joints = mask_joints.numpy()
 
                 if self.vis_flag:
-                    self.visualizer.visualize_psm(f'{self.outfile_prefix}/vis/{id}_{img_id}_{category_id}.png', img_path, input_size, input_center, input_scale, mask_body, mask_joint, mask_joints)
+                    self.visualizer.visualize_psm(f'{self.outfile_prefix}/vis/{id}_{img_id}_{category_id}.png', img_path, \
+                                                  input_size, input_center, input_scale, mask_body, mask_joint, mask_joints, mask_flow)
                     self.vis_flag = False
 
                 if self.save:
@@ -186,4 +198,4 @@ class PSMMetricWrapper(BaseMetric):
         if self.vis:
             self.vis_flag = True
 
-        self.metric.compute_metrics(results)
+        return self.metric.compute_metrics(results)

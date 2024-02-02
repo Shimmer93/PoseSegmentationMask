@@ -13,12 +13,13 @@ from .mpii_trb_dataset import MpiiTrbDataset
 from .ochuman_dataset import OCHumanDataset
 from .posetrack18_dataset import PoseTrack18Dataset
 from .posetrack18_video_dataset import PoseTrack18VideoDataset
+from .jhmdb_flow_dataset import JhmdbFlowDataset
 
 __all__ = [
     'CocoDataset', 'CocoPSMDataset', 'MpiiDataset', 'MpiiTrbDataset', 'AicDataset',
     'CrowdPoseDataset', 'OCHumanDataset', 'MhpDataset', 'PoseTrack18Dataset',
     'JhmdbDataset', 'PoseTrack18VideoDataset', 'HumanArtDataset',
-    'HumanArt21Dataset', 'ExlposeDataset'
+    'HumanArt21Dataset', 'ExlposeDataset', 'JhmdbFlowDataset'
 ]
 
 str_to_dataset = {
@@ -35,5 +36,6 @@ str_to_dataset = {
     'PoseTrack18VideoDataset': PoseTrack18VideoDataset,
     'HumanArtDataset': HumanArtDataset,
     'HumanArt21Dataset': HumanArt21Dataset,
-    'ExlposeDataset': ExlposeDataset
+    'ExlposeDataset': ExlposeDataset,
+    'JhmdbFlowDataset': JhmdbFlowDataset
 }

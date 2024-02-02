@@ -8,6 +8,7 @@ NECKS = MODELS
 HEADS = MODELS
 LOSSES = MODELS
 POSE_ESTIMATORS = MODELS
+FLOWNETS = MODELS
 
 
 def build_backbone(cfg):
@@ -33,6 +34,10 @@ def build_loss(cfg):
 def build_pose_estimator(cfg):
     """Build pose estimator."""
     return POSE_ESTIMATORS.build(cfg)
+
+def build_flownet(cfg):
+    """Build flownet."""
+    return FLOWNETS.build(cfg)
 
 
 def build_posenet(cfg):

@@ -9,7 +9,7 @@ from .common_transforms import (Albumentation, FilterAnnotations,
 from .converting import KeypointConverter, SingleHandConverter
 from .formatting import PackPoseInputs
 from .hand_transforms import HandRandomFlip
-from .loading import LoadImage
+from .loading import LoadImage, LoadImagePair
 from .mix_img_transforms import Mosaic, YOLOXMixUp
 from .pose3d_transforms import RandomFlipAroundRoot
 from .topdown_transforms import TopdownAffine
@@ -17,7 +17,7 @@ from .topdown_transforms import TopdownAffine
 __all__ = [
     'GetBBoxCenterScale', 'RandomBBoxTransform', 'RandomFlip',
     'RandomHalfBody', 'TopdownAffine', 'Albumentation',
-    'PhotometricDistortion', 'PackPoseInputs', 'LoadImage',
+    'PhotometricDistortion', 'PackPoseInputs', 'LoadImage', 'LoadImagePair',
     'BottomupGetHeatmapMask', 'BottomupRandomAffine', 'BottomupResize',
     'GenerateTarget', 'KeypointConverter', 'RandomFlipAroundRoot',
     'FilterAnnotations', 'YOLOXHSVRandomAug', 'YOLOXMixUp', 'Mosaic',

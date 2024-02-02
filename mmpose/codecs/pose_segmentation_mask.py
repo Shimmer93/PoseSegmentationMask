@@ -94,7 +94,7 @@ class PoseSegmentationMask(BaseKeypointCodec):
 
     instance_mapping_table = dict(keypoints='keypoints', )
     label_mapping_table = dict(keypoint_weights='keypoint_weights', )
-    field_mapping_table = dict(masks='masks', )
+    field_mapping_table = dict(masks='masks', heatmaps='heatmaps', )
 
     def __init__(self,
                  input_size: Tuple[int, int],
@@ -139,13 +139,22 @@ class PoseSegmentationMask(BaseKeypointCodec):
             keypoints_visible = np.ones(keypoints.shape[:2], dtype=np.float32)
 
         w, h = self.input_size
-        body_mask = skeleton_to_body_mask(keypoints, self.links, w, h)
-        joint_mask = skeleton_to_joint_mask(keypoints, w, h)
-        keypoint_weights = get_keypoint_weights(keypoints, keypoints_visible, w, h)
+        body_mask = skeleton_to_body_mask(keypoints, self.links, h, w)
+        joint_mask = skeleton_to_joint_mask(keypoints, h, w)
+        # keypoint_weights = get_keypoint_weights(keypoints, keypoints_visible, w, h)
+
+        heatmaps, keypoint_weights = generate_gaussian_heatmaps(
+                heatmap_size=self.input_size,
+                keypoints=keypoints,
+                keypoints_visible=keypoints_visible,
+                sigma=self.sigma)
 
         masks = np.concatenate([np.expand_dims(body_mask, axis=0), joint_mask], axis=0)
 
+        # print(masks.shape, heatmaps.shape, keypoint_weights.shape)
+
         encoded = dict(
+            heatmaps=heatmaps,
             masks=masks,
             keypoints=keypoints,
             keypoint_weights=keypoint_weights,

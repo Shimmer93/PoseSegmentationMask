@@ -630,12 +630,12 @@ class FlowMaskHead(ImplicitPointRendMaskHead):
         super().__init__(in_channels, train_num_points, subdivision_steps, scale, \
                  num_layers, channels, image_feature_enabled, positional_encoding_enabled, num_classes)
 
-    def forward(self, features, flows=None, mode='fit'):
+    def forward(self, features, flows=None):
         """
         Args:
             features: B C H W
         """
-        if mode == 'fit':
+        if self.training:
             # parameters = self.parameter_head(self._roi_pooler(features))
 
             point_coords, point_labels = self._sample_train_points_with_flow(features, flows)
@@ -753,13 +753,20 @@ class PointHead(BaseHead):
         self.flag2 = True
         self.use_flow = use_flow
 
-        # self.deconv_layers = self._make_deconv_layers(
-        #     in_channels=in_channels,
-        #     layer_out_channels=deconv_out_channels,
-        #     layer_kernel_sizes=deconv_kernel_sizes,
-        # )
+        deconv_layers = self._make_deconv_layers(
+            in_channels=in_channels,
+            layer_out_channels=deconv_out_channels,
+            layer_kernel_sizes=deconv_kernel_sizes,
+        )
 
-        # in_channels = deconv_out_channels[-1]
+        in_channels = deconv_out_channels[-1]
+
+        cfg = dict(
+            type='Conv2d',
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=1)
+        final_layer = build_conv_layer(cfg)
 
         self.body_dec = nn.Sequential(
             Conv2d(in_channels, hid_channels, 3, 1, 1, activation=nn.ReLU()),
@@ -768,12 +775,12 @@ class PointHead(BaseHead):
             nn.BatchNorm2d(hid_channels)
         )
 
-        self.joint_dec = nn.Sequential(
-            Conv2d(in_channels, hid_channels, 3, 1, 1, activation=nn.ReLU()),
-            nn.BatchNorm2d(hid_channels),
-            Conv2d(hid_channels, hid_channels, 3, 1, 1, activation=nn.ReLU()),
-            nn.BatchNorm2d(hid_channels)
-        )
+        # self.joint_dec = nn.Sequential(
+        #     Conv2d(in_channels, hid_channels, 3, 1, 1, activation=nn.ReLU()),
+        #     nn.BatchNorm2d(hid_channels),
+        #     Conv2d(hid_channels, hid_channels, 3, 1, 1, activation=nn.ReLU()),
+        #     nn.BatchNorm2d(hid_channels)
+        # )
 
         if self.use_flow:
             self.flow_dec = nn.Sequential(
@@ -785,8 +792,13 @@ class PointHead(BaseHead):
 
         self.body_head = BodyMaskHead(hid_channels, train_num_points, subdivision_steps, scale, \
                                       num_layers, hid_channels, image_feature_enabled, pos_enc_enabled)
-        self.joint_head = JointMaskHead(hid_channels, train_num_points, subdivision_steps, scale, \
-                                        num_layers, hid_channels, image_feature_enabled, pos_enc_enabled, out_channels)
+        # self.joint_head = JointMaskHead(hid_channels, train_num_points, subdivision_steps, scale, \
+        #                                 num_layers, hid_channels, image_feature_enabled, pos_enc_enabled, out_channels)
+        self.joint_head = nn.Sequential(
+            deconv_layers,
+            final_layer
+        )
+
         if self.use_flow:
             self.flow_head = FlowMaskHead(hid_channels, train_num_points, subdivision_steps, scale, \
                                         num_layers, hid_channels, image_feature_enabled, pos_enc_enabled)

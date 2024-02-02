@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+from collections import OrderedDict
 
 from .update import BasicUpdateBlock, SmallUpdateBlock
 from .extractor import BasicEncoder, SmallEncoder
@@ -11,23 +11,25 @@ from .utils.utils import bilinear_sampler, coords_grid, upflow8
 
 from mmpose.registry import MODELS
 
+from argparse import Namespace
+
 @MODELS.register_module()
 class RAFT(nn.Module):
-    def __init__(self, args):
+    def __init__(self, args_dict):
         super(RAFT, self).__init__()
-        self.args = args
+        self.args = Namespace(**args_dict)
 
-        if args.small:
+        if self.args.small:
             self.hidden_dim = hdim = 96
             self.context_dim = cdim = 64
-            args.corr_levels = 4
-            args.corr_radius = 3
+            self.args.corr_levels = 4
+            self.args.corr_radius = 3
         
         else:
             self.hidden_dim = hdim = 128
             self.context_dim = cdim = 128
-            args.corr_levels = 4
-            args.corr_radius = 4
+            self.args.corr_levels = 4
+            self.args.corr_radius = 4
 
         if 'dropout' not in self.args:
             self.args.dropout = 0
@@ -36,15 +38,24 @@ class RAFT(nn.Module):
             self.args.alternate_corr = False
 
         # feature network, context network, and update block
-        if args.small:
-            self.fnet = SmallEncoder(output_dim=128, norm_fn='instance', dropout=args.dropout)        
-            self.cnet = SmallEncoder(output_dim=hdim+cdim, norm_fn='none', dropout=args.dropout)
+        if self.args.small:
+            self.fnet = SmallEncoder(output_dim=128, norm_fn='instance', dropout=self.args.dropout)        
+            self.cnet = SmallEncoder(output_dim=hdim+cdim, norm_fn='none', dropout=self.args.dropout)
             self.update_block = SmallUpdateBlock(self.args, hidden_dim=hdim)
 
         else:
-            self.fnet = BasicEncoder(output_dim=256, norm_fn='instance', dropout=args.dropout)        
-            self.cnet = BasicEncoder(output_dim=hdim+cdim, norm_fn='batch', dropout=args.dropout)
+            self.fnet = BasicEncoder(output_dim=256, norm_fn='instance', dropout=self.args.dropout)        
+            self.cnet = BasicEncoder(output_dim=hdim+cdim, norm_fn='batch', dropout=self.args.dropout)
             self.update_block = BasicUpdateBlock(self.args, hidden_dim=hdim)
+
+        sd = torch.load(self.args.flow_model_path, map_location='cpu')
+        new_sd = OrderedDict()
+        for k, v in sd.items():
+            if k.startswith('module.'):
+                new_sd[k[7:]] = v
+            else:
+                new_sd[k] = v
+        self.load_state_dict(new_sd)
 
     def freeze_bn(self):
         for m in self.modules():

@@ -46,7 +46,7 @@ class PSMVisualizer:
         return canvas
 
     def visualize_psm(self, save_path, masks_body, masks_joint, masks_joints, masks_flow=None, fig_h=10, fig_w=10, nrows=4, ncols=5):
-        print(masks_body.shape, masks_joint.shape, masks_joints.shape)
+        # print(masks_body.shape, masks_joint.shape, masks_joints.shape)
         num_kps = masks_joints.shape[0]
         if masks_flow is not None:
             assert nrows * ncols >= num_kps + 3, f'{nrows} * {ncols} < {num_kps} + 3'

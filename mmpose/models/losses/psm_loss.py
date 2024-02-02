@@ -30,10 +30,14 @@ class JointSegTrainLoss(nn.Module):
         self.neg_weight = neg_weight
         self.use_target_weight = use_target_weight
 
-    def forward(self, point_logits, point_labels, target_weight=None):
+    def forward(self, point_logits_, point_labels_, target_weight=None):
         # point_logits: B C P
         # point_labels: B P
         # target_weight: B C
+        # print(point_logits.size(), point_labels.size(), target_weight.size())
+        point_logits, pred_hmaps = point_logits_
+        point_labels, gt_hmaps = point_labels_
+        # gt_hmaps = gt_hmaps / gt_hmaps.max(dim=(2,3), keepdim=True)[0]
 
         loss = 0
         for i in range(point_logits.size(1)):
@@ -58,5 +62,7 @@ class JointSegTrainLoss(nn.Module):
                 
             loss += (1 - self.neg_weight) * torch.mean(loss_i_pos) + \
                 self.neg_weight * torch.mean(loss_i_neg)
+            
+        # loss += F.mse_loss(pred_hmaps, gt_hmaps)
 
         return loss * self.loss_weight

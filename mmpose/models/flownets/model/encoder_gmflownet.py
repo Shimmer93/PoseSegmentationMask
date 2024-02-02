@@ -13,7 +13,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 from timm.models.layers import trunc_normal_
-from model.flow.model.modules import to_2tuple
+from .modules import to_2tuple
 
 
 class Mlp(nn.Module):

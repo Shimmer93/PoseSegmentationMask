@@ -26,7 +26,7 @@ from ..base import BaseCocoStyleDataset
 
 
 @DATASETS.register_module()
-class JhmdbDataset(BaseCocoStyleDataset):
+class JhmdbFlowDataset(BaseCocoStyleDataset):
     """JhmdbDataset dataset for pose estimation.
 
     "Towards understanding action recognition", ICCV'2013.
