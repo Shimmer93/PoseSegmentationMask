@@ -546,23 +546,88 @@ class JointMaskHead(ImplicitPointRendMaskHead):
         super().__init__(in_channels, train_num_points, subdivision_steps, scale, \
                  num_layers, channels, image_feature_enabled, positional_encoding_enabled, num_classes)
 
-    def forward(self, features, skls=None, gt_masks=None, gt_hmaps=None, mode='fit'):
+    def forward(self, features, skls=None, gt_masks=None, mode='fit'):
         """
         Args:
             features: B C H W
         """
         if mode == 'fit':
-            point_coords, point_labels = self._sample_train_points_with_skeleton(features, skls, gt_masks)
+            point_coords, point_labels = self._sample_train_points_with_skeleton2(features, skls, gt_masks)
+            B, J, P, D = point_coords.shape
+            point_coords = point_coords.reshape(B, J*P, D)
             point_fine_grained_features = self._point_pooler(features, point_coords)
             point_logits = self._get_point_logits(
                 point_fine_grained_features, point_coords
             )
-            # masks = self._subdivision_inference(features)
-            masks = None
-
-            return (point_logits, masks), (point_labels, gt_hmaps)
+            return point_logits.reshape(B, J, J, P), point_labels
         else:
             return self._subdivision_inference(features)
+        
+    def _sample_train_points_with_skeleton2(self, features, skls, gt_masks):
+        assert self.training
+
+        B, J, _, _ = gt_masks.shape
+        hf = features.shape[-2]
+        wf = features.shape[-1]
+
+        h = int(hf // self.scale)
+        w = int(wf // self.scale)
+
+        # y_mins, y_maxs, x_mins, x_maxs = get_min_max_from_skeletons(skls, h, w)
+        # y_mins, y_maxs, x_mins, x_maxs = get_min_max_from_masks(gt_masks.sum(dim=1))
+        min_maxs = []
+        for j in range(J):
+            min_maxs.append(tuple(get_min_max_from_masks(gt_masks[:, j])))
+
+        point_coords = []
+        point_labels = []
+
+        for i in range(B):
+            coords_i = []
+            labels_i = []
+
+            for j in range(J):
+                y_min, y_max, x_min, x_max = min_maxs[j]
+
+                neg_mask = torch.ones((h, w), dtype=torch.bool, device=features.device)
+                if y_min[i] >= 0:
+                    assert y_max[i] >= 0 and x_min[i] >= 0 and x_max[i] >= 0
+                    neg_mask[y_min[i]:y_max[i], x_min[i]:x_max[i]] = False
+                if torch.sum(neg_mask) == 0:
+                    neg_mask[0, 0] = True
+                neg_idxs = torch.nonzero(neg_mask).flip(1)
+
+                pos_mask = (gt_masks[i][j] > 0)
+                pos_idxs = torch.nonzero(pos_mask).flip(1)
+
+                if len(pos_idxs) == 0:
+                    num_samples = self.mask_point_train_num_points
+                    while len(neg_idxs) < num_samples:
+                        neg_idxs = torch.cat([neg_idxs, neg_idxs], dim=0)
+                    neg_idxs = neg_idxs[torch.randperm(len(neg_idxs)),:][:num_samples]
+                    coords_i.append(neg_idxs)
+                    labels_i.append(torch.zeros(num_samples))
+
+                else:
+                    num_samples_neg = self.mask_point_train_num_points // 8 * 7
+                    num_samples_pos = self.mask_point_train_num_points // 8
+                    while len(neg_idxs) < num_samples_neg:
+                        neg_idxs = torch.cat([neg_idxs, neg_idxs], dim=0)
+                    neg_idxs = neg_idxs[torch.randperm(len(neg_idxs)),:][:num_samples_neg]
+                    while len(pos_idxs) < num_samples_pos:
+                        pos_idxs = torch.cat([pos_idxs, pos_idxs], dim=0)
+                    pos_idxs = pos_idxs[torch.randperm(len(pos_idxs)),:][:num_samples_pos]
+                    coords_i.append(torch.cat([neg_idxs, pos_idxs], dim=0))
+                    labels_i.append(torch.cat([torch.zeros(num_samples_neg), torch.ones(num_samples_pos)], dim=0))
+
+            point_coords.append(torch.stack(coords_i, dim=0))
+            point_labels.append(torch.stack(labels_i, dim=0))
+
+        point_coords = torch.stack(point_coords, dim=0).to(features.device)
+        point_coords = point_coords / torch.tensor([w-1, h-1], dtype=torch.float, device=features.device).unsqueeze(0)
+        point_labels = torch.stack(point_labels, dim=0).to(features.device)
+
+        return point_coords, point_labels
 
     def _sample_train_points_with_skeleton(self, features, skls, gt_masks):
         assert self.training
@@ -718,8 +783,6 @@ class PointHead(BaseHead):
                  in_channels: Union[int, Sequence[int]],
                  out_channels: int,
                  num_layers: int = 3,
-                 deconv_out_channels: OptIntSeq = (256, 256, 256),
-                 deconv_kernel_sizes: OptIntSeq = (4, 4, 4),
                  hid_channels: int = 256,
                  train_num_points: int = 128,
                  subdivision_steps: int = 3,
@@ -753,33 +816,19 @@ class PointHead(BaseHead):
         self.flag2 = True
         self.use_flow = use_flow
 
-        # self.deconv_layers = self._make_deconv_layers(
-        #     in_channels=in_channels,
-        #     layer_out_channels=deconv_out_channels,
-        #     layer_kernel_sizes=deconv_kernel_sizes,
-        # )
-
-        # in_channels = deconv_out_channels[-1]
-
         self.body_dec = nn.Sequential(
             Conv2d(in_channels, hid_channels, 3, 1, 1, activation=nn.ReLU()),
-            nn.BatchNorm2d(hid_channels),
-            Conv2d(hid_channels, hid_channels, 3, 1, 1, activation=nn.ReLU()),
             nn.BatchNorm2d(hid_channels)
         )
 
         self.joint_dec = nn.Sequential(
             Conv2d(in_channels, hid_channels, 3, 1, 1, activation=nn.ReLU()),
-            nn.BatchNorm2d(hid_channels),
-            Conv2d(hid_channels, hid_channels, 3, 1, 1, activation=nn.ReLU()),
             nn.BatchNorm2d(hid_channels)
         )
 
         if self.use_flow:
             self.flow_dec = nn.Sequential(
                 Conv2d(in_channels, hid_channels, 3, 1, 1, activation=nn.ReLU()),
-                nn.BatchNorm2d(hid_channels),
-                Conv2d(hid_channels, hid_channels, 3, 1, 1, activation=nn.ReLU()),
                 nn.BatchNorm2d(hid_channels)
             )
 
@@ -839,7 +888,7 @@ class PointHead(BaseHead):
 
         return nn.Sequential(*layers)
         
-    def forward(self, feats: Tuple[Tensor], feats_flow=None, skls=None, gt_masks=None, gt_hmaps=None, flows=None, mode='fit') -> Tensor:
+    def forward(self, feats: Tuple[Tensor], feats_flow=None, skls=None, gt_masks=None, flows=None, mode='fit') -> Tensor:
         """Forward the network. The input is multi scale feature maps and the
         output is the heatmap.
 
@@ -862,7 +911,7 @@ class PointHead(BaseHead):
 
         # print(x_body.shape, x_joint.shape, skls.shape, gt_masks.shape)
         ret_body = self.body_head(x_body, skls=skls_, gt_masks=gt_masks_body, mode=mode)
-        ret_joint = self.joint_head(x_joint, skls=skls_, gt_masks=gt_masks_joints, gt_hmaps=gt_hmaps, mode=mode)
+        ret_joint = self.joint_head(x_joint, skls=skls_, gt_masks=gt_masks_joints, mode=mode)
         if self.use_flow:
             ret_flow = self.flow_head(x_flow, flows=flows, mode=mode)
 
@@ -946,15 +995,13 @@ class PointHead(BaseHead):
 
         gt_masks = torch.stack(
             [d.gt_fields.masks for d in batch_data_samples])
-        gt_heatmaps = torch.stack(
-            [d.gt_fields.heatmaps for d in batch_data_samples])
         keypoints = torch.stack(
             [torch.from_numpy(d.gt_instances.keypoints) for d in batch_data_samples])
         keypoint_weights = torch.cat([
             d.gt_instance_labels.keypoint_weights for d in batch_data_samples
         ])  
 
-        rets = self.forward(feats, feats_flow, keypoints, gt_masks, gt_heatmaps, flows, mode='fit')
+        rets = self.forward(feats, feats_flow, keypoints, gt_masks, flows, mode='fit')
 
         input_list = []
         target_list = []

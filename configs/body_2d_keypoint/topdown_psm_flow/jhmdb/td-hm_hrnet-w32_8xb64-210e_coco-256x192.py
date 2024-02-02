@@ -190,6 +190,6 @@ test_dataloader = val_dataloader
 
 # evaluators
 val_evaluator = [
-    dict(type='PSMMetricWrapper', use_flow=True, metric_config=dict(type='JhmdbPCKAccuracy', thr=0.2, norm_item=['bbox', 'torso']), outfile_prefix='logs/jhmdb3/td-hm_res50_8xb64-20e_jhmdb-sub1-256x256'),
+    dict(type='PSMMetricWrapper', use_flow=True, metric_config=dict(type='JhmdbPCKAccuracy', thr=0.2, norm_item=['bbox', 'torso']), outfile_prefix='logs/jhmdb5/td-hm_res50_8xb64-20e_jhmdb-sub1-256x256'),
 ]
 test_evaluator = val_evaluator
