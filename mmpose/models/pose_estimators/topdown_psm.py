@@ -1,6 +1,7 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 from itertools import zip_longest
 from typing import Optional, Tuple
+from collections import OrderedDict
 
 import torch
 from torch import Tensor
@@ -46,7 +47,8 @@ class TopdownPoseEstimatorPSM(BasePoseEstimator):
                  test_cfg: OptConfigType = None,
                  data_preprocessor: OptConfigType = None,
                  init_cfg: OptMultiConfig = None,
-                 metainfo: Optional[dict] = None):
+                 metainfo: Optional[dict] = None,
+                 noflow_ckpt_path = None):
         super().__init__(
             backbone=backbone,
             neck=neck,
@@ -59,6 +61,15 @@ class TopdownPoseEstimatorPSM(BasePoseEstimator):
         
         self.flownet = MODELS.build(flownet)
         self.backbone_flow = MODELS.build(backbone_flow)
+
+        if noflow_ckpt_path is not None:
+            ckpt = torch.load(noflow_ckpt_path, map_location='cpu')
+            sd = ckpt['state_dict']
+            new_sd = OrderedDict()
+            for k, v in sd.items():
+                if k.startswith('backbone'):
+                    new_sd[k[9:]] = v
+            self.backbone.load_state_dict(new_sd, strict=False)
 
     def extract_feat(self, inputs: Tensor) -> Tuple[Tensor]:
         """Extract features.
@@ -174,13 +185,15 @@ class TopdownPoseEstimatorPSM(BasePoseEstimator):
             gt_instances = data_sample.gt_instances
 
             # convert keypoint coordinates from input space to image space
-            input_center = data_sample.metainfo['input_center']
-            input_scale = data_sample.metainfo['input_scale']
-            input_size = data_sample.metainfo['input_size']
+            if 'input_center' in data_sample.metainfo:
+                input_center = data_sample.metainfo['input_center']
+                input_scale = data_sample.metainfo['input_scale']
+                input_size = data_sample.metainfo['input_size']
 
-            pred_instances.keypoints[..., :2] = \
-                pred_instances.keypoints[..., :2] / input_size * input_scale \
-                + input_center - 0.5 * input_scale
+                pred_instances.keypoints[..., :2] = \
+                    pred_instances.keypoints[..., :2] / input_size * input_scale \
+                    + input_center - 0.5 * input_scale
+                
             if 'keypoints_visible' not in pred_instances:
                 pred_instances.keypoints_visible = \
                     pred_instances.keypoint_scores

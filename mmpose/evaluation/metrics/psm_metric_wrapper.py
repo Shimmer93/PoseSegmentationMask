@@ -69,7 +69,7 @@ class PSMVisualizer:
             canvas = canvas[...,::-1]
         return canvas
 
-    def visualize_psm(self, save_path, img_path, input_size, input_center, input_scale, mask_body, mask_joint, mask_joints, mask_flow=None, fig_h=10, fig_w=10, nrows=4, ncols=5):
+    def visualize_psm(self, save_path, img_path, mask_body, mask_joint, mask_joints, mask_flow=None, input_size=None, input_center=None, input_scale=None, fig_h=10, fig_w=10, nrows=4, ncols=5):
         num_kps = mask_joints.shape[0]
         if mask_flow is not None:
             assert nrows * ncols >= num_kps + 4, f'{nrows} * {ncols} < {num_kps} + 4'
@@ -78,8 +78,11 @@ class PSMVisualizer:
 
         # for i in range(len(mask_body)):
         img = plt.imread(img_path)
-        warp_matrix = get_warp_matrix(input_center, input_scale, 0, input_size)
-        warped_img = cv2.warpAffine(img, warp_matrix, input_size, flags=cv2.INTER_LINEAR)
+        if input_size is None:
+            warped_img = img
+        else:
+            warp_matrix = get_warp_matrix(input_center, input_scale, 0, input_size)
+            warped_img = cv2.warpAffine(img, warp_matrix, input_size, flags=cv2.INTER_LINEAR)
         mask_body = self.mask_to_image(mask_body, 1)
         mask_joint = self.mask_to_image(mask_joint, num_kps)
         mask_joints = self.mask_to_joint_images(mask_joints, num_kps)
@@ -101,6 +104,8 @@ class PSMVisualizer:
 
 def write_psm(save_path, joint_masks, body_mask=None, obj_mask=None, rescale_ratio=1.0):
 
+    os.makedirs(save_path.rsplit('/', 1)[0], exist_ok=True)
+
     out_masks = joint_masks
     if body_mask is not None:
         out_masks = np.concatenate([out_masks, np.expand_dims(body_mask, axis=0)], axis=0)
@@ -110,7 +115,7 @@ def write_psm(save_path, joint_masks, body_mask=None, obj_mask=None, rescale_rat
     #                           mode='bilinear', align_corners=False).squeeze(0)
     h, w = out_masks.shape[-2:]
     out_masks = np.stack([cv2.resize(mask, dsize=(int(w/rescale_ratio), int(h/rescale_ratio)), interpolation=cv2.INTER_LINEAR) for mask in out_masks])
-    out_masks = ((out_masks > 0.5)*255).astype(np.uint8)
+    out_masks = (out_masks * 255).astype(np.uint8)
     J, H, W = out_masks.shape
 
     nw = 4
@@ -141,6 +146,7 @@ class PSMMetricWrapper(BaseMetric):
         self.metric_config = metric_config
         self.vis = vis
         self.vis_flag = vis
+        self.count = 0
         self.save = save
         self.use_flow = use_flow
 
@@ -166,20 +172,30 @@ class PSMMetricWrapper(BaseMetric):
                 category_id = data_sample.get('category_id', 1)
                 masks = data_sample['pred_fields']['heatmaps'].detach().cpu()
 
-                input_size = data_sample['input_size']
-                input_center = data_sample['input_center']
-                input_scale = data_sample['input_scale']
+                if 'input_size' in data_sample:
+                    input_size = data_sample['input_size']
+                    input_center = data_sample['input_center']
+                    input_scale = data_sample['input_scale']
+                else:
+                    input_size = None
+                    input_center = None
+                    input_scale = None
 
                 mask_body = (F.sigmoid(masks[0]) > 0.5).float()
                 mask_body = mask_body.numpy()
+                mask_body_raw = F.sigmoid(masks[0]).numpy()
 
                 if self.use_flow:
                     mask_joints = (F.sigmoid(masks[1:-1]) > 0.5).float()
+                    mask_joints_raw = F.sigmoid(masks[1:-1]).numpy()
                     mask_flow = (F.sigmoid(masks[-1]) > 0.5).float()
                     mask_flow = mask_flow.numpy()
+                    mask_flow_raw = F.sigmoid(masks[-1]).numpy()
                 else:
                     mask_joints = (F.sigmoid(masks[1:]) > 0.5).float()
+                    mask_joints_raw = F.sigmoid(masks[1:]).numpy()
                     mask_flow = None
+                    mask_flow_raw = None
 
                 mask_joints_neg = (torch.max(mask_joints, dim=0, keepdim=True)[0] < 0.5).float()
                 mask_joint = torch.argmax(torch.cat([mask_joints_neg, mask_joints], dim=0), dim=0)
@@ -187,15 +203,102 @@ class PSMMetricWrapper(BaseMetric):
                 mask_joints = mask_joints.numpy()
 
                 if self.vis_flag:
-                    self.visualizer.visualize_psm(f'{self.outfile_prefix}/vis/{id}_{img_id}_{category_id}.png', img_path, \
-                                                  input_size, input_center, input_scale, mask_body, mask_joint, mask_joints, mask_flow)
+                    self.visualizer.visualize_psm(f'{self.outfile_prefix}/vis/{self.count:03d}_{id}_{img_id}.png', img_path, \
+                                                  mask_body, mask_joint, mask_joints, mask_flow, input_size, input_center, input_scale)
                     self.vis_flag = False
 
                 if self.save:
-                    write_psm(f'{self.outfile_prefix}/results/{id}_{img_id}_{category_id}.png', mask_joint, mask_body, rescale_ratio=4.)
+                    write_psm(img_path.replace('Rename_Images', 'PSM_grouped'), mask_joints_raw, mask_body_raw, mask_flow_raw, rescale_ratio=4.)
 
     def compute_metrics(self, results: list) -> Dict[str, float]:
         if self.vis:
             self.vis_flag = True
+            self.count += 1
+
+        return self.metric.compute_metrics(results)
+    
+@METRICS.register_module()
+class PSMHeatMapMetricWrapper(BaseMetric):
+    def __init__(self, 
+                 metric_config: Dict,
+                 vis: bool = True,
+                 save: bool = False,
+                 use_flow: bool = False,
+                 outfile_prefix: Optional[str] = None,
+                 collect_device: str = 'cpu',
+                 prefix: Optional[str] = None,
+                 collect_dir: Optional[str] = None) -> None:
+        super().__init__(collect_device=collect_device, prefix=prefix, collect_dir=collect_dir)
+        self.metric_config = metric_config
+        self.vis = vis
+        self.vis_flag = vis
+        self.count = 0
+        self.save = save
+        self.use_flow = use_flow
+
+        self.metric = METRICS.build(metric_config)
+        self.outfile_prefix = self.metric.outfile_prefix if outfile_prefix is None else outfile_prefix
+
+        os.makedirs(self.outfile_prefix, exist_ok=True)
+        os.makedirs(f'{self.outfile_prefix}/vis', exist_ok=True)
+        os.makedirs(f'{self.outfile_prefix}/results', exist_ok=True)
+        
+        self.visualizer = PSMVisualizer()
+
+    def process(self, data_batch: Sequence[dict], data_samples: Sequence[dict]) -> None:
+        self.metric.process(data_batch, data_samples)
+        self.results.append(self.metric.results[-1])
+
+        for data_sample in data_samples:
+            if 'pred_fields' in data_sample:
+
+                id = data_sample['id']
+                img_id = data_sample['img_id']
+                img_path = data_sample['img_path']
+                category_id = data_sample.get('category_id', 1)
+                masks = data_sample['pred_fields']['heatmaps'].detach().cpu()
+
+                if 'input_size' in data_sample:
+                    input_size = data_sample['input_size']
+                    input_center = data_sample['input_center']
+                    input_scale = data_sample['input_scale']
+                else:
+                    input_size = None
+                    input_center = None
+                    input_scale = None
+
+                mask_body = (F.sigmoid(masks[0]) > 0.5).float()
+                mask_body = mask_body.numpy()
+                mask_body_raw = F.sigmoid(masks[0]).numpy()
+
+                if self.use_flow:
+                    mask_joints = (masks[1:-1] > 0.5).float()
+                    mask_joints_raw = (masks[1:-1] > 0.3).numpy()
+                    mask_flow = (F.sigmoid(masks[-1]) > 0.5).float()
+                    mask_flow = mask_flow.numpy()
+                    mask_flow_raw = F.sigmoid(masks[-1]).numpy()
+                else:
+                    mask_joints = (masks[1:] > 0.5).float()
+                    mask_joints_raw = (masks[1:] > 0.3).numpy()
+                    mask_flow = None
+                    mask_flow_raw = None
+
+                mask_joints_neg = (torch.max(mask_joints, dim=0, keepdim=True)[0] < 0.5).float()
+                mask_joint = torch.argmax(torch.cat([mask_joints_neg, mask_joints], dim=0), dim=0)
+                mask_joint = mask_joint.numpy()
+                mask_joints = mask_joints.numpy()
+
+                if self.vis_flag:
+                    self.visualizer.visualize_psm(f'{self.outfile_prefix}/vis/{self.count:03d}_{id}_{img_id}.png', img_path, \
+                                                  mask_body, mask_joint, mask_joints, mask_flow, input_size, input_center, input_scale)
+                    self.vis_flag = False
+
+                if self.save:
+                    write_psm(img_path.replace('Rename_Images', 'PSM_v8'), mask_joints_raw, mask_body_raw, mask_flow_raw, rescale_ratio=1.)
+
+    def compute_metrics(self, results: list) -> Dict[str, float]:
+        if self.vis:
+            self.vis_flag = True
+            self.count += 1
 
         return self.metric.compute_metrics(results)

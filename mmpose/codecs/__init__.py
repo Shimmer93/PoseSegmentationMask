@@ -14,12 +14,12 @@ from .simcc_label import SimCCLabel
 from .spr import SPR
 from .udp_heatmap import UDPHeatmap
 from .video_pose_lifting import VideoPoseLifting
-from .pose_segmentation_mask import PoseSegmentationMask
+from .pose_segmentation_mask import PoseSegmentationMask, HeatMapPoseSegmentationMask
 
 __all__ = [
     'MSRAHeatmap', 'MegviiHeatmap', 'UDPHeatmap', 'RegressionLabel',
     'SimCCLabel', 'IntegralRegressionLabel', 'AssociativeEmbedding', 'SPR',
     'DecoupledHeatmap', 'VideoPoseLifting', 'ImagePoseLifting',
     'MotionBERTLabel', 'YOLOXPoseAnnotationProcessor', 'EDPoseLabel',
-    'Hand3DHeatmap', 'PoseSegmentationMask'
+    'Hand3DHeatmap', 'PoseSegmentationMask', 'HeatMapPoseSegmentationMask'
 ]

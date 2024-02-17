@@ -9,10 +9,10 @@ from .keypoint_3d_metrics import MPJPE
 from .keypoint_partition_metric import KeypointPartitionMetric
 from .posetrack18_metric import PoseTrack18Metric
 from .simple_keypoint_3d_metrics import SimpleMPJPE
-from .psm_metric_wrapper import PSMMetricWrapper
+from .psm_metric_wrapper import PSMMetricWrapper, PSMHeatMapMetricWrapper
 
 __all__ = [
     'CocoMetric', 'PCKAccuracy', 'MpiiPCKAccuracy', 'JhmdbPCKAccuracy', 'AUC',
     'EPE', 'NME', 'PoseTrack18Metric', 'CocoWholeBodyMetric',
-    'KeypointPartitionMetric', 'MPJPE', 'InterHandMetric', 'SimpleMPJPE', 'CocoMetricPSM', 'PSMMetricWrapper'
+    'KeypointPartitionMetric', 'MPJPE', 'InterHandMetric', 'SimpleMPJPE', 'CocoMetricPSM', 'PSMMetricWrapper', 'PSMHeatMapMetricWrapper'
 ]

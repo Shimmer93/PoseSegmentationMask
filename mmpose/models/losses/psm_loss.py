@@ -18,7 +18,7 @@ class BodySegTrainLoss(nn.Module):
         # target_weight: B C
         reduced_weight = torch.sum(target_weight, dim=1, keepdim=True) / target_weight.size(1)
         loss = self.criterion(point_logits.squeeze(1), point_labels) * reduced_weight
-        loss = torch.mean(loss, dim=1)
+        loss = torch.mean(loss)
         return loss * self.loss_weight
 
 @MODELS.register_module()
@@ -38,34 +38,49 @@ class JointSegTrainLoss(nn.Module):
         # gt_hmaps = gt_hmaps / gt_hmaps.max(dim=(2,3), keepdim=True)[0]
         # print(point_logits.shape, point_labels.shape, target_weight.shape)
 
-        reduced_weight = torch.sum(target_weight, dim=1, keepdim=True) / target_weight.size(1)
+        # reduced_weight = torch.sum(target_weight, dim=1, keepdim=True) / target_weight.size(1)
 
         loss = 0
-        for i in range(point_logits.size(2)):
-            loss_i = self.criterion(point_logits[:, i, i].squeeze(), point_labels[:, i]) * reduced_weight
-            loss += torch.mean(loss_i, dim=1)
-            # preds = point_logits[:,i,...]
-            # pos_mask = (point_labels == i+1)
-            # neg_mask = (point_labels != i+1)
-            # pos_preds = preds[pos_mask]
-            # pos_gt = torch.ones_like(pos_preds)
-            # neg_preds = preds[neg_mask]
-            # neg_gt = torch.zeros_like(neg_preds)
+        for i in range(point_logits.size(1)):
+            # loss_i = self.criterion(point_logits[:, i, i].squeeze(), point_labels[:, i]) * reduced_weight
+            # loss += torch.mean(loss_i)
+            preds = point_logits[:,i,...]
+            pos_mask = (point_labels == i+1)
+            neg_mask = (point_labels != i+1)
+            pos_preds = preds[pos_mask]
+            pos_gt = torch.ones_like(pos_preds)
+            neg_preds = preds[neg_mask]
+            neg_gt = torch.zeros_like(neg_preds)
             
-            # loss_i_pos = self.criterion(pos_preds, pos_gt)
-            # loss_i_neg = self.criterion(neg_preds, neg_gt)
-            # # preds_ = torch.cat((pos_preds, neg_preds), dim=0)
-            # # gts_ = torch.cat((pos_gt, neg_gt), dim=0)
-            # # loss += self.criterion(preds_, gts_)
+            loss_i_pos = self.criterion(pos_preds, pos_gt)
+            loss_i_neg = self.criterion(neg_preds, neg_gt)
+            # preds_ = torch.cat((pos_preds, neg_preds), dim=0)
+            # gts_ = torch.cat((pos_gt, neg_gt), dim=0)
+            # loss += self.criterion(preds_, gts_)
             
-            # if target_weight is not None and self.use_target_weight:
-            #     weights = target_weight[:,i:i+1].repeat(1, point_logits.size(-1))
-            #     loss_i_pos = loss_i_pos * weights[pos_mask]
-            #     loss_i_neg = loss_i_neg * weights[neg_mask]
+            if target_weight is not None and self.use_target_weight:
+                weights = target_weight[:,i:i+1].repeat(point_logits.size(0)//target_weight.size(0), point_logits.size(-1))
+                loss_i_pos = loss_i_pos * weights[pos_mask]
+                loss_i_neg = loss_i_neg * weights[neg_mask]
                 
-            # loss += (1 - self.neg_weight) * torch.mean(loss_i_pos) + \
-            #     self.neg_weight * torch.mean(loss_i_neg)
+            loss += (1 - self.neg_weight) * torch.mean(loss_i_pos) + \
+                self.neg_weight * torch.mean(loss_i_neg)
             
         # loss += F.mse_loss(pred_hmaps, gt_hmaps)
 
+        return loss * self.loss_weight
+
+@MODELS.register_module()
+class JointSegTrainLoss2(nn.Module):
+    def __init__(self, loss_weight=1.0, neg_weight=0.8, use_target_weight=False):
+        super(JointSegTrainLoss2, self).__init__()
+        self.criterion = nn.BCEWithLogitsLoss(reduction='none')
+        self.loss_weight = loss_weight
+        self.neg_weight = neg_weight
+        self.use_target_weight = use_target_weight
+
+    def forward(self, pred_masks, gt_masks, target_weight=None):
+        reduced_weight = (torch.sum(target_weight, dim=1) / target_weight.size(1)).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+        loss = self.criterion(pred_masks, gt_masks) * reduced_weight
+        loss = torch.mean(loss)
         return loss * self.loss_weight

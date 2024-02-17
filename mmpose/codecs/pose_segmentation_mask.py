@@ -89,15 +89,22 @@ def get_keypoint_weights(keypoints, keypoints_visible, height, width):
                 keypoint_weights[i, j] = 0
     return keypoint_weights
 
+def get_dataset_links(dataset_type):
+    return str_to_dataset[dataset_type]._load_metainfo()["skeleton_links"]
+
+def get_dataset_joint_groups(dataset_type):
+    if 'Jhmdb' in dataset_type:
+        return [[0], [1], [2], [3, 4], [5, 6], [7, 8], [9, 10], [11, 12], [13, 14]] 
+
 @KEYPOINT_CODECS.register_module()
 class PoseSegmentationMask(BaseKeypointCodec):
 
-    instance_mapping_table = dict(keypoints='keypoints', )
     label_mapping_table = dict(keypoint_weights='keypoint_weights', )
     field_mapping_table = dict(masks='masks', )
 
     def __init__(self,
                  input_size: Tuple[int, int],
+                 mask_size: Tuple[int, int],
                  sigma: float,
                  dataset_type: str,
                  unbiased: bool = False,
@@ -105,12 +112,22 @@ class PoseSegmentationMask(BaseKeypointCodec):
                  use_flow: bool = False) -> None:
         super().__init__()
         self.input_size = input_size
+        self.mask_size = mask_size
         self.sigma = sigma
         self.unbiased = unbiased
 
         self.blur_kernel_size = blur_kernel_size
-        self.links = str_to_dataset[dataset_type]._load_metainfo()["skeleton_links"]
+        self.links = get_dataset_links(dataset_type)
+        self.joint_groups = get_dataset_joint_groups(dataset_type)
+        self.inverse_joint_groups = {}
+        for g, group in enumerate(self.joint_groups):
+            for i in group:
+                self.inverse_joint_groups[i] = g
+
         self.use_flow = use_flow
+
+        self.scale_factor = (np.array(input_size) /
+                             mask_size).astype(np.float32)
 
     def encode(self,
                keypoints: np.ndarray,
@@ -138,10 +155,14 @@ class PoseSegmentationMask(BaseKeypointCodec):
         if keypoints_visible is None:
             keypoints_visible = np.ones(keypoints.shape[:2], dtype=np.float32)
 
-        w, h = self.input_size
-        body_mask = skeleton_to_body_mask(keypoints, self.links, h, w)
-        joint_mask = skeleton_to_joint_mask(keypoints, h, w)
-        keypoint_weights = get_keypoint_weights(keypoints, keypoints_visible, h, w)
+        w, h = self.mask_size
+        w_, h_ = self.input_size
+        body_mask = skeleton_to_body_mask(keypoints / self.scale_factor, self.links, h, w)
+        joint_mask = skeleton_to_joint_mask(keypoints / self.scale_factor, h, w)
+        # joint_mask = np.zeros((len(self.joint_groups), h, w))
+        # for i, group in enumerate(self.joint_groups):
+        #     joint_mask[i] = np.sum(joint_mask_[group], axis=0)
+        keypoint_weights = get_keypoint_weights(keypoints, keypoints_visible, h_, w_)
 
         masks = np.concatenate([np.expand_dims(body_mask, axis=0), joint_mask], axis=0)
 
@@ -149,7 +170,135 @@ class PoseSegmentationMask(BaseKeypointCodec):
 
         encoded = dict(
             masks=masks,
-            keypoints=keypoints,
+            keypoint_weights=keypoint_weights,
+        )
+
+        return encoded
+
+    def decode(self, encoded: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Decode keypoint coordinates from heatmaps. The decoded keypoint
+        coordinates are in the input image space.
+
+        Args:
+            encoded (np.ndarray): Heatmaps in shape (K, H, W)
+
+        Returns:
+            tuple:
+            - keypoints (np.ndarray): Decoded keypoint coordinates in shape
+                (N, K, D)
+            - scores (np.ndarray): The keypoint scores in shape (N, K). It
+                usually represents the confidence of the keypoint prediction
+        """
+        masks = encoded.copy()
+        K, H, W = masks.shape
+
+        masks_joints = masks[1:-1,...] if self.use_flow else masks[1:,...]
+        # masks_joints = np.zeros((len(self.inverse_joint_groups), H, W))
+        # for k, v in self.inverse_joint_groups.items():
+        #     masks_joints[k] = masks_joints_[v]
+
+        keypoints, scores = get_heatmap_maximum(masks_joints)
+
+        # Unsqueeze the instance dimension for single-instance results
+        keypoints, scores = keypoints[None], scores[None]
+
+        # print(masks.shape, keypoints.shape, scores.shape)
+
+        if self.unbiased:
+            # Alleviate biased coordinate
+            keypoints = refine_keypoints_dark(
+                keypoints, masks_joints, blur_kernel_size=self.blur_kernel_size)
+
+        else:
+            keypoints = refine_keypoints(keypoints, masks_joints)
+
+        # Restore the keypoint scale
+        keypoints = keypoints * self.scale_factor
+
+        return keypoints, scores
+    
+@KEYPOINT_CODECS.register_module()
+class HeatMapPoseSegmentationMask(BaseKeypointCodec):
+
+    label_mapping_table = dict(keypoint_weights='keypoint_weights', )
+    field_mapping_table = dict(masks='masks', heatmaps='heatmaps')
+
+    def __init__(self,
+                 input_size: Tuple[int, int],
+                 mask_size: Tuple[int, int],
+                 sigma: float,
+                 dataset_type: str,
+                 unbiased: bool = False,
+                 blur_kernel_size: int = 3,
+                 use_flow: bool = False) -> None:
+        super().__init__()
+        self.input_size = input_size
+        self.mask_size = mask_size
+        self.sigma = sigma
+        self.unbiased = unbiased
+
+        self.blur_kernel_size = blur_kernel_size
+        self.links = str_to_dataset[dataset_type]._load_metainfo()["skeleton_links"]
+        self.use_flow = use_flow
+
+        self.scale_factor = (np.array(input_size) /
+                             mask_size).astype(np.float32)
+
+    def encode(self,
+               keypoints: np.ndarray,
+               keypoints_visible: Optional[np.ndarray] = None) -> dict:
+        """Encode keypoints into heatmaps. Note that the original keypoint
+        coordinates should be in the input image space.
+
+        Args:
+            keypoints (np.ndarray): Keypoint coordinates in shape (N, K, D)
+            keypoints_visible (np.ndarray): Keypoint visibilities in shape
+                (N, K)
+
+        Returns:
+            dict:
+            - heatmaps (np.ndarray): The generated heatmap in shape
+                (K, H, W) where [W, H] is the `heatmap_size`
+            - keypoint_weights (np.ndarray): The target weights in shape
+                (N, K)
+        """
+
+        assert keypoints.shape[0] == 1, (
+            f'{self.__class__.__name__} only support single-instance '
+            'keypoint encoding')
+
+        if keypoints_visible is None:
+            keypoints_visible = np.ones(keypoints.shape[:2], dtype=np.float32)
+
+        w, h = self.mask_size
+        w_, h_ = self.input_size
+        body_mask = skeleton_to_body_mask(keypoints / self.scale_factor, self.links, h, w)
+        joint_mask = skeleton_to_joint_mask(keypoints / self.scale_factor, h, w)
+        # keypoint_weights = get_keypoint_weights(keypoints, keypoints_visible, h_, w_)
+
+        if keypoints_visible is None:
+            keypoints_visible = np.ones(keypoints.shape[:2], dtype=np.float32)
+
+        if self.unbiased:
+            heatmaps, keypoint_weights = generate_unbiased_gaussian_heatmaps(
+                heatmap_size=self.mask_size,
+                keypoints=keypoints / self.scale_factor,
+                keypoints_visible=keypoints_visible,
+                sigma=self.sigma)
+        else:
+            heatmaps, keypoint_weights = generate_gaussian_heatmaps(
+                heatmap_size=self.mask_size,
+                keypoints=keypoints / self.scale_factor,
+                keypoints_visible=keypoints_visible,
+                sigma=self.sigma)
+
+        masks = np.concatenate([np.expand_dims(body_mask, axis=0), joint_mask], axis=0)
+
+        # print(masks.shape, heatmaps.shape, keypoint_weights.shape)
+
+        encoded = dict(
+            masks=masks,
+            heatmaps=heatmaps,
             keypoint_weights=keypoint_weights,
         )
 
@@ -190,6 +339,6 @@ class PoseSegmentationMask(BaseKeypointCodec):
             keypoints = refine_keypoints(keypoints, masks_joints)
 
         # Restore the keypoint scale
-        # keypoints = keypoints * self.scale_factor
+        keypoints = keypoints * self.scale_factor
 
         return keypoints, scores

@@ -30,6 +30,19 @@ Shape shorthand in this module:
     P: number of points
 """
 
+def transfer_masks_with_flows(masks, flows):
+    B, J, H, W = masks.size()
+    idxs = torch.nonzero(masks)
+    flows_ = flows.permute(0, 2, 3, 1).unsqueeze(1).repeat(1, J, 1, 1, 1)
+    disps = flows_[idxs[:, 0], idxs[:, 1], idxs[:, 2], idxs[:, 3]].long()
+    new_idxs = idxs
+    new_idxs[:, 2:] = new_idxs[:, 2:] + disps
+    new_idxs[:, 2] = torch.clamp(new_idxs[:, 2], min=0, max=H-1)
+    new_idxs[:, 3] = torch.clamp(new_idxs[:, 3], min=0, max=W-1)
+    new_masks = torch.zeros(B, J, H, W)
+    new_masks[new_idxs[:, 0], new_idxs[:, 1], new_idxs[:, 2], new_idxs[:, 3]] = 1
+    return new_masks
+
 def get_min_max_from_skeletons(skls, H, W, padding=10):
     y_mins = torch.min(skls[..., 1], dim=1)[0].type(torch.int)
     y_maxs = torch.max(skls[..., 1], dim=1)[0].type(torch.int)
@@ -43,10 +56,10 @@ def get_min_max_from_skeletons(skls, H, W, padding=10):
     
     return y_mins, y_maxs, x_mins, x_maxs
 
-def get_min_max_from_masks(masks):
+def get_min_max_from_masks(masks, padding=5):
 
     # masks: B H W
-    B = masks.size(0)
+    B, H, W = masks.shape
     y_mins = []
     y_maxs = []
     x_mins = []
@@ -64,6 +77,16 @@ def get_min_max_from_masks(masks):
     y_maxs = torch.tensor(y_maxs, dtype=torch.int)
     x_mins = torch.tensor(x_mins, dtype=torch.int)
     x_maxs = torch.tensor(x_maxs, dtype=torch.int)
+
+    # y_mins = torch.clamp(y_mins - padding, min=0)
+    # y_maxs = torch.clamp(y_maxs + padding, max=H)
+    # x_mins = torch.clamp(x_mins - padding, min=0)
+    # x_maxs = torch.clamp(x_maxs + padding, max=W)
+
+    # y_mins = y_mins * exist_mask + (1 - exist_mask) * -1
+    # y_maxs = y_maxs * exist_mask + (1 - exist_mask) * -1
+    # x_mins = x_mins * exist_mask + (1 - exist_mask) * -1
+    # x_maxs = x_maxs * exist_mask + (1 - exist_mask) * -1
 
     return y_mins, y_maxs, x_mins, x_maxs
 
@@ -552,14 +575,20 @@ class JointMaskHead(ImplicitPointRendMaskHead):
             features: B C H W
         """
         if mode == 'fit':
-            point_coords, point_labels = self._sample_train_points_with_skeleton2(features, skls, gt_masks)
-            B, J, P, D = point_coords.shape
-            point_coords = point_coords.reshape(B, J*P, D)
+            # point_coords, point_labels = self._sample_train_points_with_skeleton2(features, skls, gt_masks)
+            # B, J, P, D = point_coords.shape
+            # point_coords = point_coords.reshape(B, J*P, D)
+            # point_fine_grained_features = self._point_pooler(features, point_coords)
+            # point_logits = self._get_point_logits(
+            #     point_fine_grained_features, point_coords
+            # )
+            # return point_logits.reshape(B, J, J, P), point_labels
+            point_coords, point_labels = self._sample_train_points_with_skeleton(features, skls, gt_masks)
             point_fine_grained_features = self._point_pooler(features, point_coords)
             point_logits = self._get_point_logits(
                 point_fine_grained_features, point_coords
             )
-            return point_logits.reshape(B, J, J, P), point_labels
+            return point_logits, point_labels
         else:
             return self._subdivision_inference(features)
         
@@ -639,7 +668,7 @@ class JointMaskHead(ImplicitPointRendMaskHead):
         w = int(wf // self.scale)
 
         # y_mins, y_maxs, x_mins, x_maxs = get_min_max_from_skeletons(skls, h, w)
-        y_mins, y_maxs, x_mins, x_maxs = get_min_max_from_masks(gt_masks.sum(dim=1))
+        y_mins, y_maxs, x_mins, x_maxs = get_min_max_from_masks(gt_masks.sum(dim=1), padding=0)
 
         point_coords = []
         point_labels = []
@@ -725,10 +754,12 @@ class FlowMaskHead(ImplicitPointRendMaskHead):
 
         # with torch.no_grad():
         #     flows0 = flows.detach().clone()
+        #     flows0 = F.interpolate(flows0, size=(h, w), mode='bilinear', align_corners=False)
         #     flows_norm = torch.norm(flows0, dim=1, keepdim=True)
         #     flows_norm_max = flows_norm.flatten(2).max(dim=2)[0].unsqueeze(1).unsqueeze(1)
 
         #     flows1 = flows.detach().clone()
+        #     flows1 = F.interpolate(flows1, size=(h, w), mode='bilinear', align_corners=False)
         #     flows_mean = torch.mean(flows1, dim=(2, 3), keepdim=True)
         #     flows_centered = flows1 - flows_mean
         #     flows_centered_norm = torch.norm(flows_centered, dim=1, keepdim=True)
@@ -756,17 +787,29 @@ class FlowMaskHead(ImplicitPointRendMaskHead):
         point_labels = []
 
         for(i, (pos_mask, neg_mask)) in enumerate(zip(pos_masks, neg_masks)):
-            num_samples = self.mask_point_train_num_points // 2
+            if torch.sum(neg_mask) == 0:
+                neg_mask[0, 0] = True
             neg_idxs = torch.nonzero(neg_mask).flip(1)
-            while len(neg_idxs) < num_samples:
-                neg_idxs = torch.cat([neg_idxs, neg_idxs], dim=0)
-            neg_idxs = neg_idxs[torch.randperm(len(neg_idxs)),:][:num_samples]
             pos_idxs = torch.nonzero(pos_mask).flip(1)
-            while len(pos_idxs) < num_samples:
-                pos_idxs = torch.cat([pos_idxs, pos_idxs], dim=0)
-            pos_idxs = pos_idxs[torch.randperm(len(pos_idxs)),:][:num_samples]
-            point_coords.append(torch.cat([neg_idxs, pos_idxs], dim=0))
-            point_labels.append(torch.cat([torch.zeros(num_samples), torch.ones(num_samples)], dim=0))
+
+            if len(pos_idxs) == 0:
+                num_samples = self.mask_point_train_num_points
+                while len(neg_idxs) < num_samples:
+                    neg_idxs = torch.cat([neg_idxs, neg_idxs], dim=0)
+                neg_idxs = neg_idxs[torch.randperm(len(neg_idxs)),:][:num_samples]
+                point_coords.append(neg_idxs)
+                point_labels.append(torch.zeros(num_samples))
+
+            else:
+                num_samples = self.mask_point_train_num_points // 2
+                while len(neg_idxs) < num_samples:
+                    neg_idxs = torch.cat([neg_idxs, neg_idxs], dim=0)
+                neg_idxs = neg_idxs[torch.randperm(len(neg_idxs)),:][:num_samples]
+                while len(pos_idxs) < num_samples:
+                    pos_idxs = torch.cat([pos_idxs, pos_idxs], dim=0)
+                pos_idxs = pos_idxs[torch.randperm(len(pos_idxs)),:][:num_samples]
+                point_coords.append(torch.cat([neg_idxs, pos_idxs], dim=0))
+                point_labels.append(torch.cat([torch.zeros(num_samples), torch.ones(num_samples)], dim=0))
 
         point_coords = torch.stack(point_coords, dim=0).to(features.device)
         point_coords = point_coords / torch.tensor([w-1, h-1], dtype=torch.float, device=features.device).unsqueeze(0)
@@ -818,17 +861,23 @@ class PointHead(BaseHead):
 
         self.body_dec = nn.Sequential(
             Conv2d(in_channels, hid_channels, 3, 1, 1, activation=nn.ReLU()),
+            # nn.BatchNorm2d(hid_channels),
+            # Conv2d(hid_channels, hid_channels, 3, 1, 1, activation=nn.ReLU()),
             nn.BatchNorm2d(hid_channels)
         )
 
         self.joint_dec = nn.Sequential(
             Conv2d(in_channels, hid_channels, 3, 1, 1, activation=nn.ReLU()),
+            # nn.BatchNorm2d(hid_channels),
+            # Conv2d(hid_channels, hid_channels, 3, 1, 1, activation=nn.ReLU()),
             nn.BatchNorm2d(hid_channels)
         )
 
         if self.use_flow:
             self.flow_dec = nn.Sequential(
                 Conv2d(in_channels, hid_channels, 3, 1, 1, activation=nn.ReLU()),
+                # nn.BatchNorm2d(hid_channels),
+                # Conv2d(hid_channels, hid_channels, 3, 1, 1, activation=nn.ReLU()),
                 nn.BatchNorm2d(hid_channels)
             )
 
@@ -887,6 +936,47 @@ class PointHead(BaseHead):
             in_channels = out_channels
 
         return nn.Sequential(*layers)
+    
+    # def forward(self, feats: Tuple[Tensor], feats_flow=None, skls=None, gt_masks=None, flows=None, mode='fit') -> Tensor:
+    #     x = feats[-1]
+    #     if self.use_flow:
+    #         x_flow = self.flow_dec(feats_flow[-1])
+
+    #     if mode == 'fit':
+    #         if self.use_flow:
+    #             x_body = torch.chunk(x, 2, dim=0)[0]
+    #         else:
+    #             x_body = x
+    #         x_body = self.body_dec(x_body)
+    #         x_joint = self.joint_dec(x)
+            
+    #         skls_ = skls[:,0,...]
+    #         gt_masks_body = gt_masks[:,0,...]
+    #         gt_masks_joints = gt_masks[:,1:,...]
+
+    #         if self.use_flow:
+    #             gt_masks_joints_new = transfer_masks_with_flows(gt_masks_joints, flows).to(gt_masks_joints.device)
+    #             gt_masks_joints = torch.cat([gt_masks_joints, gt_masks_joints_new], dim=0)
+
+    #         ret_body = self.body_head(x_body, skls=skls_, gt_masks=gt_masks_body, mode=mode)
+    #         ret_joint = self.joint_head(x_joint, skls=skls_, gt_masks=gt_masks_joints, mode=mode)
+    #         if self.use_flow:
+    #             ret_flow = self.flow_head(x_flow, flows=flows, mode=mode)
+    #             return ret_body, ret_joint, ret_flow
+    #         else:
+    #             return ret_body, ret_joint
+            
+    #     else:
+    #         x_body = self.body_dec(x)
+    #         x_joint = self.joint_dec(x)
+
+    #         mask_body = self.body_head(x_body, mode=mode)
+    #         mask_joint = self.joint_head(x_joint, mode=mode)
+    #         if self.use_flow:
+    #             mask_flow = self.flow_head(x_flow, mode=mode)
+    #             return torch.cat([mask_body, mask_joint, mask_flow], dim=1)
+    #         else:
+    #             return torch.cat([mask_body, mask_joint], dim=1)
         
     def forward(self, feats: Tuple[Tensor], feats_flow=None, skls=None, gt_masks=None, flows=None, mode='fit') -> Tensor:
         """Forward the network. The input is multi scale feature maps and the
@@ -995,8 +1085,9 @@ class PointHead(BaseHead):
 
         gt_masks = torch.stack(
             [d.gt_fields.masks for d in batch_data_samples])
-        keypoints = torch.stack(
-            [torch.from_numpy(d.gt_instances.keypoints) for d in batch_data_samples])
+        # keypoints = torch.stack(
+        #     [torch.from_numpy(d.gt_instances.keypoints) for d in batch_data_samples])
+        keypoints = None
         keypoint_weights = torch.cat([
             d.gt_instance_labels.keypoint_weights for d in batch_data_samples
         ])  

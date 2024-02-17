@@ -17,8 +17,8 @@ param_scheduler = [
     dict(
         type='MultiStepLR',
         begin=0,
-        end=300,
-        milestones=[170, 200],
+        end=200,
+        milestones=[80, 150],
         gamma=0.1,
         by_epoch=True)
 ]
@@ -36,7 +36,7 @@ data_root = '/scratch/PI/cqf/har_data/jhmdb'
 
 # codec settings
 codec = dict(
-    type='PoseSegmentationMask', input_size=(256, 256), mask_size=(256, 256), dataset_type=dataset_type, sigma=3, use_flow=True)
+    type='PoseSegmentationMask', input_size=(256, 256), dataset_type=dataset_type, sigma=3, use_flow=True)
 
 # model settings
 model = dict(
@@ -49,7 +49,7 @@ model = dict(
     flownet=dict(
         type='RAFT',
         args_dict=dict(
-            flow_model_path = '/home/zpengac/RAFT/models/raft-sintel.pth',
+            flow_model_path = '/home/zpengac/RAFT/models/raft-things.pth',
             global_flow = True,
             dataset = 'sintel',
             small = False
@@ -69,57 +69,44 @@ model = dict(
                 with_fuse=(True, True, True),
                 reduce_ratios=(8, 8, 8),
                 num_channels=(
-                    (32, 64),
-                    (32, 64, 128),
-                    (32, 64, 128, 256),
+                    (40, 80),
+                    (40, 80, 160),
+                    (40, 80, 160, 320),
                 )),
             with_head=True,
         )),
     backbone=dict(
-        type='HRNet',
+        type='LiteHRNet',
         in_channels=3,
         extra=dict(
-            stage1=dict(
-                num_modules=1,
-                num_branches=1,
-                block='BOTTLENECK',
-                num_blocks=(4, ),
-                num_channels=(64, )),
-            stage2=dict(
-                num_modules=1,
-                num_branches=2,
-                block='BASIC',
-                num_blocks=(4, 4),
-                num_channels=(32, 64)),
-            stage3=dict(
-                num_modules=4,
-                num_branches=3,
-                block='BASIC',
-                num_blocks=(4, 4, 4),
-                num_channels=(32, 64, 128)),
-            stage4=dict(
-                num_modules=3,
-                num_branches=4,
-                block='BASIC',
-                num_blocks=(4, 4, 4, 4),
-                num_channels=(32, 64, 128, 256))),
-        init_cfg=dict(
-            type='Pretrained',
-            checkpoint='https://download.openmmlab.com/mmpose/'
-            'pretrain_models/hrnet_w32-36af842e.pth'),
-    ),
+            stem=dict(stem_channels=32, out_channels=32, expand_ratio=1),
+            num_stages=3,
+            stages_spec=dict(
+                num_modules=(2, 4, 2),
+                num_branches=(2, 3, 4),
+                num_blocks=(2, 2, 2),
+                module_type=('LITE', 'LITE', 'LITE'),
+                with_fuse=(True, True, True),
+                reduce_ratios=(8, 8, 8),
+                num_channels=(
+                    (40, 80),
+                    (40, 80, 160),
+                    (40, 80, 160, 320),
+                )),
+            with_head=True,
+        )),
     head=dict(
         type='PointHead',
-        in_channels=32,
+        in_channels=40,
         out_channels=15,
         num_layers=3,
-        hid_channels=64,
+        hid_channels=40,
         train_num_points=256,
-        subdivision_steps=2,
+        subdivision_steps=3,
         scale=1/4,
         use_flow=True,
         loss=dict(type='MultipleLossWrapper', losses=[
-             dict(type='BodySegTrainLoss', loss_weight=1, use_target_weight=True),
+             dict(type='BodySegTrainLoss', loss_weight=0.1, use_target_weight=True),
              dict(type='JointSegTrainLoss', loss_weight=2, neg_weight=0.9, use_target_weight=True),
              dict(type='BodySegTrainLoss', use_target_weight=True)
              ]),
@@ -181,6 +168,6 @@ test_dataloader = val_dataloader
 
 # evaluators
 val_evaluator = [
-    dict(type='PSMMetricWrapper', use_flow=True, metric_config=dict(type='JhmdbPCKAccuracy', thr=0.2, norm_item=['bbox', 'torso']), outfile_prefix='logs/jhmdb_final/td-hm_res50_8xb64-20e_jhmdb-sub1-256x256'),
+    dict(type='PSMMetricWrapper', use_flow=True, metric_config=dict(type='JhmdbPCKAccuracy', thr=0.2, norm_item=['bbox', 'torso']), outfile_prefix='logs/jhmdb10/td-hm_res50_8xb64-20e_jhmdb-sub1-256x256'),
 ]
 test_evaluator = val_evaluator
