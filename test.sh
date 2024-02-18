@@ -1,1 +1,1 @@
-GPUS=8 CPUS_PER_TASK=2 GPUS_PER_NODE=8 SRUN_ARGS="--nodelist=hhnode-ib-144" ./tools/slurm_test.sh gpu-share mmpose_test configs/body_2d_keypoint/topdown_psm_flow/jhmdb/td-hm_hrnet-w32_8xb64-210e_coco-256x192_test.py logs/jhmdb26/best_PCK_epoch_180.pth
+GPUS=8 CPUS_PER_TASK=2 GPUS_PER_NODE=8 SRUN_ARGS="--nodelist=hhnode-ib-144" ./tools/slurm_test.sh gpu-share mmpose_test configs/body_2d_keypoint/topdown_psm_flow/jhmdb/td-hm_hrnet-w32_8xb64-210e_coco-256x192_test.py logs/jhmdb_final5/best_PCK_epoch_100.pth

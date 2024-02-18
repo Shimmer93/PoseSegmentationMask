@@ -57,7 +57,7 @@ model = dict(
     ),
     backbone_flow=dict(
         type='LiteHRNet',
-        in_channels=2,
+        in_channels=5,
         extra=dict(
             stem=dict(stem_channels=32, out_channels=32, expand_ratio=1),
             num_stages=3,
@@ -111,7 +111,7 @@ model = dict(
     head=dict(
         type='PointHead',
         in_channels=32,
-        out_channels=9,
+        out_channels=15,
         num_layers=3,
         hid_channels=64,
         train_num_points=256,
@@ -119,7 +119,7 @@ model = dict(
         scale=1/4,
         use_flow=True,
         loss=dict(type='MultipleLossWrapper', losses=[
-             dict(type='BodySegTrainLoss', loss_weight=1, use_target_weight=True),
+             dict(type='BodySegTrainLoss', loss_weight=10, use_target_weight=True),
              dict(type='JointSegTrainLoss', loss_weight=2, neg_weight=0.9, use_target_weight=True),
              dict(type='BodySegTrainLoss', use_target_weight=True)
              ]),
@@ -181,6 +181,6 @@ test_dataloader = val_dataloader
 
 # evaluators
 val_evaluator = [
-    dict(type='PSMMetricWrapper', use_flow=True, save=True, metric_config=dict(type='JhmdbPCKAccuracy', thr=0.2, norm_item=['bbox', 'torso']), outfile_prefix='logs/jhmdb26_test/td-hm_res50_8xb64-20e_jhmdb-sub1-256x256'),
+    dict(type='PSMMetricWrapper', use_flow=True, save=True, metric_config=dict(type='JhmdbPCKAccuracy', thr=0.2, norm_item=['bbox', 'torso']), outfile_prefix='logs/jhmdb_final5_test/td-hm_res50_8xb64-20e_jhmdb-sub1-256x256'),
 ]
 test_evaluator = val_evaluator

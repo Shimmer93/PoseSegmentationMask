@@ -48,7 +48,8 @@ class TopdownPoseEstimatorPSM(BasePoseEstimator):
                  data_preprocessor: OptConfigType = None,
                  init_cfg: OptMultiConfig = None,
                  metainfo: Optional[dict] = None,
-                 noflow_ckpt_path = None):
+                 noflow_ckpt_path = None,
+                 use_flow = True):
         super().__init__(
             backbone=backbone,
             neck=neck,
@@ -61,6 +62,7 @@ class TopdownPoseEstimatorPSM(BasePoseEstimator):
         
         self.flownet = MODELS.build(flownet)
         self.backbone_flow = MODELS.build(backbone_flow)
+        self.use_flow = use_flow
 
         if noflow_ckpt_path is not None:
             ckpt = torch.load(noflow_ckpt_path, map_location='cpu')
@@ -71,7 +73,13 @@ class TopdownPoseEstimatorPSM(BasePoseEstimator):
                     new_sd[k[9:]] = v
             self.backbone.load_state_dict(new_sd, strict=False)
 
-    def extract_feat(self, inputs: Tensor) -> Tuple[Tensor]:
+    def extract_feat_without_flow(self, inputs: Tensor) -> Tensor:
+        x_body = self.backbone(inputs)
+        if self.with_neck:
+            x_body = self.neck(x_body)
+        return x_body
+
+    def extract_feat_with_flow(self, inputs: Tensor) -> Tuple[Tensor]:
         """Extract features.
 
         Args:
@@ -89,6 +97,7 @@ class TopdownPoseEstimatorPSM(BasePoseEstimator):
             flow_mean = torch.mean(flow, dim=(2, 3), keepdim=True)
             flow_std = torch.std(flow, dim=(2, 3), keepdim=True)
             flow_ = (flow - flow_mean) / flow_std
+            flow_ = torch.cat((flow_, x0), dim=1)
 
         x_body = self.backbone(x0)
         if self.with_neck:
@@ -108,9 +117,14 @@ class TopdownPoseEstimatorPSM(BasePoseEstimator):
         Returns:
             dict: A dictionary of losses.
         """
-        feats_body, feats_flow, flows = self.extract_feat(inputs)
-
         losses = dict()
+
+        if self.use_flow:
+            feats_body, feats_flow, flows = self.extract_feat_with_flow(inputs)
+        else:
+            feats_body = self.extract_feat_without_flow(inputs)
+            feats_flow = None
+            flows = None
 
         if self.with_head:
             losses.update(
@@ -142,7 +156,11 @@ class TopdownPoseEstimatorPSM(BasePoseEstimator):
         assert self.with_head, (
             'The model must have head to perform prediction.')
 
-        feats_body, feats_flow, _ = self.extract_feat(inputs)
+        if self.use_flow:
+            feats_body, feats_flow, _ = self.extract_feat_with_flow(inputs)
+        else:
+            feats_body = self.extract_feat_without_flow(inputs)
+            feats_flow = None
 
         preds = self.head.predict(feats_body, data_samples, test_cfg=self.test_cfg, feats_flow=feats_flow)
 

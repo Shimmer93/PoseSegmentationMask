@@ -1,12 +1,12 @@
 _base_ = ['../../../_base_/default_runtime.py']
 
 # runtime
-train_cfg = dict(max_epochs=100, val_interval=10)
+train_cfg = dict(max_epochs=210, val_interval=10)
 
 # optimizer
 optim_wrapper = dict(optimizer=dict(
     type='Adam',
-    lr=1e-2,
+    lr=5e-4,
 ))
 
 # learning policy
@@ -17,32 +17,29 @@ param_scheduler = [
     dict(
         type='MultiStepLR',
         begin=0,
-        end=100,
-        milestones=[40, 80],
+        end=210,
+        milestones=[170, 200],
         gamma=0.1,
         by_epoch=True)
 ]
 
-# automatically scaling LR based on the actual training batch size
-auto_scale_lr = dict(base_batch_size=512)
-
 # hooks
-default_hooks = dict(checkpoint=dict(save_best='PCK', rule='greater'))
+default_hooks = dict(checkpoint=dict(save_best='coco/AP', rule='greater'))
 
 # base dataset settings
-dataset_type = 'JhmdbFlowDataset'
+dataset_type = 'CocoDataset'
 data_mode = 'topdown'
-data_root = '/scratch/PI/cqf/har_data/jhmdb'
+data_root = '/scratch/PI/cqf/har_data/coco/'
 
 # codec settings
 codec = dict(
-    type='PoseSegmentationMask', input_size=(256, 256), mask_size=(256, 256), dataset_type=dataset_type, sigma=3, use_flow=True)
+    type='PoseSegmentationMask', input_size=(192, 256), mask_size=(192, 256), dataset_type=dataset_type, sigma=3, use_flow=False)
 
 # model settings
 model = dict(
     type='TopdownPoseEstimatorPSM',
     data_preprocessor=dict(
-        type='PoseFlowDataPreprocessor',
+        type='PoseDataPreprocessor',
         mean=[123.675, 116.28, 103.53],
         std=[58.395, 57.12, 57.375],
         bgr_to_rgb=True),
@@ -111,38 +108,38 @@ model = dict(
     head=dict(
         type='PointHead',
         in_channels=32,
-        out_channels=15,
+        out_channels=17,
         num_layers=3,
         hid_channels=64,
         train_num_points=256,
         subdivision_steps=2,
         scale=1/4,
-        use_flow=True,
+        use_flow=False,
         loss=dict(type='MultipleLossWrapper', losses=[
              dict(type='BodySegTrainLoss', loss_weight=1, use_target_weight=True),
-             dict(type='JointSegTrainLoss', loss_weight=0.5, neg_weight=0.95, use_target_weight=True),
-             dict(type='BodySegTrainLoss', use_target_weight=True)
+             dict(type='JointSegTrainLoss', loss_weight=0.5, neg_weight=0.95, use_target_weight=True)
              ]),
-        decoder=codec))
+        decoder=codec),
+    use_flow=False,
+    init_cfg=dict(
+        type='Pretrained',
+        checkpoint='/home/zpengac/pose/PoseSegmentationMask/logs/jhmdb_final5/best_PCK_epoch_100.pth'))
 
 find_unused_parameters = True
 
 # pipelines
 train_pipeline = [
-    dict(type='LoadImagePair'),
+    dict(type='LoadImage'),
     dict(type='GetBBoxCenterScale'),
     dict(type='RandomFlip', direction='horizontal'),
-    dict(
-        type='RandomBBoxTransform',
-        rotate_factor=60,
-        scale_factor=(0.75, 1.25)),
+    dict(type='RandomHalfBody'),
+    dict(type='RandomBBoxTransform'),
     dict(type='TopdownAffine', input_size=codec['input_size']),
     dict(type='GenerateTarget', encoder=codec),
     dict(type='PackPoseInputs')
 ]
-
 val_pipeline = [
-    dict(type='LoadImagePair'),
+    dict(type='LoadImage'),
     dict(type='GetBBoxCenterScale'),
     dict(type='TopdownAffine', input_size=codec['input_size']),
     dict(type='PackPoseInputs')
@@ -150,7 +147,7 @@ val_pipeline = [
 
 # data loaders
 train_dataloader = dict(
-    batch_size=16,
+    batch_size=32,
     num_workers=2,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=True),
@@ -158,12 +155,12 @@ train_dataloader = dict(
         type=dataset_type,
         data_root=data_root,
         data_mode=data_mode,
-        ann_file='annotations/Sub1_train.json',
-        data_prefix=dict(img=''),
+        ann_file='annotations/person_keypoints_train2017.json',
+        data_prefix=dict(img='train2017/'),
         pipeline=train_pipeline,
     ))
 val_dataloader = dict(
-    batch_size=8,
+    batch_size=16,
     num_workers=2,
     persistent_workers=True,
     drop_last=False,
@@ -172,8 +169,10 @@ val_dataloader = dict(
         type=dataset_type,
         data_root=data_root,
         data_mode=data_mode,
-        ann_file='annotations/Sub1_test.json',
-        data_prefix=dict(img=''),
+        ann_file='annotations/person_keypoints_val2017.json',
+        bbox_file=data_root+'person_detection_results/'
+        'COCO_val2017_detections_AP_H_56_person.json',
+        data_prefix=dict(img='val2017/'),
         test_mode=True,
         pipeline=val_pipeline,
     ))
@@ -181,6 +180,9 @@ test_dataloader = val_dataloader
 
 # evaluators
 val_evaluator = [
-    dict(type='PSMMetricWrapper', use_flow=True, metric_config=dict(type='JhmdbPCKAccuracy', thr=0.2, norm_item=['bbox', 'torso']), outfile_prefix='logs/jhmdb_final5/td-hm_res50_8xb64-20e_jhmdb-sub1-256x256'),
+    dict(type='PSMMetricWrapper', use_flow=True, 
+         metric_config=dict(type='CocoMetric', 
+                            ann_file=data_root + 'annotations/person_keypoints_val2017.json'), 
+         outfile_prefix='logs/coco_final/td-hm_hrnet-w32_8xb64-210e_coco-256x192')
 ]
 test_evaluator = val_evaluator

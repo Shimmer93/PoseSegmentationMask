@@ -118,11 +118,11 @@ class PoseSegmentationMask(BaseKeypointCodec):
 
         self.blur_kernel_size = blur_kernel_size
         self.links = get_dataset_links(dataset_type)
-        self.joint_groups = get_dataset_joint_groups(dataset_type)
-        self.inverse_joint_groups = {}
-        for g, group in enumerate(self.joint_groups):
-            for i in group:
-                self.inverse_joint_groups[i] = g
+        # self.joint_groups = get_dataset_joint_groups(dataset_type)
+        # self.inverse_joint_groups = {}
+        # for g, group in enumerate(self.joint_groups):
+        #     for i in group:
+        #         self.inverse_joint_groups[i] = g
 
         self.use_flow = use_flow
 
