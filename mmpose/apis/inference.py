@@ -239,6 +239,8 @@ def inference_topdown_batch(model: nn.Module,
         else:
             if isinstance(bboxes_in_img, list):
                 new_bboxes.append(np.array(bboxes_in_img))
+            else:
+                new_bboxes.append(bboxes_in_img)
 
             assert bbox_format in {'xyxy', 'xywh'}, \
                 f'Invalid bbox_format "{bbox_format}".'
@@ -248,6 +250,7 @@ def inference_topdown_batch(model: nn.Module,
 
     # construct batch data samples
     data_list = []
+    # print('new_bboxes: ', len(new_bboxes))
     for img, bbox in zip(imgs, new_bboxes):
         if isinstance(img, str):
             data_info = dict(img_path=img)
@@ -257,6 +260,8 @@ def inference_topdown_batch(model: nn.Module,
         data_info['bbox_score'] = np.ones(1, dtype=np.float32)  # shape (1,)
         data_info.update(model.dataset_meta)
         data_list.append(pipeline(data_info))
+
+    # print('data_list: ', len(data_list))
 
     if data_list:
         # collate data list into a batch, which is a dict with following keys:

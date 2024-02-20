@@ -13,6 +13,7 @@ import cv2
 from PIL import Image
 import decord
 from time import time
+import pickle
 
 def mrlines(fname, sp='\n'):
     f = open(fname).read().split(sp)
@@ -42,13 +43,30 @@ except (ImportError, ModuleNotFoundError):
                       '`init_pose_model` form `mmpose.apis`. These apis are '
                       'required in this script! ')
 
-default_det_config = '/home/zpengac/pose/PoseSegmentationMask/demo/mmdetection_cfg/rtmdet_tiny_8xb32-300e_coco.py'
+anno_path = 'ucf101_hrnet.pkl'
+default_det_config = 'demo/mmdetection_cfg/rtmdet_tiny_8xb32-300e_coco.py'
 default_det_ckpt = (
-    '/home/zpengac/pose/PoseSegmentationMask/logs/coco_final/rtmdet_tiny_8xb32-300e_coco_20220902_112414-78e30dcc.pth')
-default_pose_config = '/home/zpengac/pose/PoseSegmentationMask/configs/body_2d_keypoint/topdown_psm_flow/coco/td-hm_hrnet-w32_8xb64-210e_coco-256x192.py'
+    'logs/coco_final/rtmdet_tiny_8xb32-300e_coco_20220902_112414-78e30dcc.pth')
+default_pose_config = 'configs/body_2d_keypoint/topdown_psm_flow/coco/td-hm_hrnet-w32_8xb64-210e_coco-256x192_inference.py'
 default_pose_ckpt = (
-    '/home/zpengac/pose/PoseSegmentationMask/logs/coco_final/best_coco_AP_epoch_130.pth')
+    'logs/coco_final/best_coco_AP_epoch_180.pth')
 
+def get_bboxes_from_skeletons(skls, H, W, padding=10):
+    y_mins = np.min(skls[..., 1], axis=-1).astype(int)
+    y_maxs = np.max(skls[..., 1], axis=-1).astype(int)
+    x_mins = np.min(skls[..., 0], axis=-1).astype(int)
+    x_maxs = np.max(skls[..., 0], axis=-1).astype(int)
+
+    y_mins = np.clip(y_mins - padding, a_min=0, a_max=None)
+    y_maxs = np.clip(y_maxs + padding, a_min=None, a_max=H)
+    x_mins = np.clip(x_mins - padding, a_min=0, a_max=None)
+    x_maxs = np.clip(x_maxs + padding, a_min=None, a_max=W)
+
+    bboxes = np.stack([x_mins, y_mins, x_maxs, y_maxs], axis=-1)
+    bboxes = bboxes.transpose(1, 0, 2)
+    bboxes = [x for x in bboxes]
+    
+    return bboxes
 
 def extract_frame(video_path):
     vid = decord.VideoReader(video_path)
@@ -130,12 +148,13 @@ def pose_inference(anno_in, model, frames, det_results, compress=False, batch_si
     pose_samples = []
     for batch in batches:
         batch_frames, batch_det_results = zip(*batch)
+        # print(len(batch_frames), len(batch_det_results))
         batch_pose_samples = inference_topdown_batch(model, batch_frames, batch_det_results, bbox_format='xyxy')
         pose_samples.extend(batch_pose_samples)
+    # print(len(pose_samples))
     for i, pose_sample in enumerate(pose_samples):
         save_path = anno['filename'].replace('.avi', f'/{i:03d}.png').replace('videos', 'psm')
         write_psm_from_pose_sample(save_path, pose_sample, rescale_ratio=4.0)
-
     # else:
     # kp = np.zeros((num_person, total_frames, 17, 3), dtype=np.float32)
     # for i, (f, d) in enumerate(zip(frames, det_results)):
@@ -187,16 +206,23 @@ def main():
     args = parse_args()
     # assert args.out.endswith('.pkl')
 
-    print('Loading video list...')
-    lines = mrlines(args.video_list)
-    lines = [x.split() for x in lines]
+    # print('Loading video list...')
+    # lines = mrlines(args.video_list)
+    # lines = [x.split() for x in lines]
 
     # * We set 'frame_dir' as the base name (w/o. suffix) of each video
-    assert len(lines[0]) in [1, 2]
-    if len(lines[0]) == 1:
-        annos = [dict(frame_dir=osp.basename(x[0]).split('.')[0], filename=x[0]) for x in lines]
-    else:
-        annos = [dict(frame_dir=osp.basename(x[0]).split('.')[0], filename=x[0], label=int(x[1])) for x in lines]
+    # assert len(lines[0]) in [1, 2]
+    # if len(lines[0]) == 1:
+    #     annos = [dict(frame_dir=osp.basename(x[0]).split('.')[0], filename=x[0]) for x in lines]
+    # else:
+    #     annos = [dict(frame_dir=osp.basename(x[0]).split('.')[0], filename=x[0], label=int(x[1])) for x in lines]
+
+    with open(anno_path, 'rb') as f:
+        annos = pickle.load(f)['annotations']
+    for anno in annos:
+        anno['filename'] = f'/scratch/PI/cqf/har_data/ucf101/videos/{anno["frame_dir"]}.avi'
+        anno['bboxes'] = get_bboxes_from_skeletons(anno['keypoint'], anno['img_shape'][0], anno['img_shape'][1])
+
 
     print('Loading models...')
     if args.non_dist:
@@ -211,44 +237,45 @@ def main():
         my_part = annos[rank::world_size]
 
     # assert det_model.CLASSES[0] == 'person', 'A detector trained on COCO is required'
-    det_model = init_detector(args.det_config, args.det_ckpt, 'cuda')
-    det_model.cfg = adapt_mmdet_pipeline(det_model.cfg)
+    # det_model = init_detector(args.det_config, args.det_ckpt, 'cuda')
+    # det_model.cfg = adapt_mmdet_pipeline(det_model.cfg)
     pose_model = init_model(args.pose_config, args.pose_ckpt, 'cuda')
 
     print('Start inference...')
     results = []
     for anno in tqdm(my_part):
-        t_start = time()
         frames = extract_frame(anno['filename'])
-        t_extract = time()
-        det_results = detection_inference(det_model, frames, batch_size_det=32)
-        t_det = time()
+        frames_next = cp.deepcopy(frames)
+        frames_next.pop(0)
+        frames_next.append(frames[-1])
+        frames = [np.concatenate([frames[i], frames_next[i]], axis=-1) for i in range(len(frames))] 
+        # det_results = detection_inference(det_model, frames, batch_size_det=32)
+        # t_det = time()
         # * Get detection results for human
         # det_results = [x[0] for x in det_results]
-        for i, det_sample in enumerate(det_results):
-            # * filter boxes with small scores
-            res = det_sample.pred_instances.bboxes.cpu().numpy()
-            scores = det_sample.pred_instances.scores.cpu().numpy()
-            res = res[scores >= args.det_score_thr]
-            # * filter boxes with small areas
-            box_areas = (res[:, 3] - res[:, 1]) * (res[:, 2] - res[:, 0])
-            assert np.all(box_areas >= 0)
-            res = res[box_areas >= args.det_area_thr]
-            det_results[i] = res
-        t_det_filter = time()
+        # for i, det_sample in enumerate(det_results):
+        #     # * filter boxes with small scores
+        #     res = det_sample.pred_instances.bboxes.cpu().numpy()
+        #     scores = det_sample.pred_instances.scores.cpu().numpy()
+        #     res = res[scores >= args.det_score_thr]
+        #     # * filter boxes with small areas
+        #     box_areas = (res[:, 3] - res[:, 1]) * (res[:, 2] - res[:, 0])
+        #     assert np.all(box_areas >= 0)
+        #     res = res[box_areas >= args.det_area_thr]
+        #     det_results[i] = res
+        # t_det_filter = time()
+
+        det_results = anno['bboxes']
+
+        n_frames = min(len(frames), len(det_results))
+        frames = frames[:n_frames]
+        det_results = det_results[:n_frames]
 
         shape = frames[0].shape[:2]
         anno['img_shape'] = shape
         anno = pose_inference(anno, pose_model, frames, det_results, compress=args.compress, batch_size_pose=32)
         anno.pop('filename')
         results.append(anno)
-
-        t_pose = time()
-
-        print(f'Extract: {t_extract - t_start:.2f}s, '
-              f'Det: {t_det - t_extract:.2f}s, '
-              f'DetFilter: {t_det_filter - t_det:.2f}s, '
-              f'Pose: {t_pose - t_det_filter:.2f}s')
 
 if __name__ == '__main__':
     main()
