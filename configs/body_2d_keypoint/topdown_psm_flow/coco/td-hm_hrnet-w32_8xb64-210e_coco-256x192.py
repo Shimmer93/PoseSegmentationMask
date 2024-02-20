@@ -179,10 +179,8 @@ val_dataloader = dict(
 test_dataloader = val_dataloader
 
 # evaluators
-val_evaluator = [
-    dict(type='PSMMetricWrapper', use_flow=True, 
-         metric_config=dict(type='CocoMetric', 
-                            ann_file=data_root + 'annotations/person_keypoints_val2017.json'), 
-         outfile_prefix='logs/coco_final/td-hm_hrnet-w32_8xb64-210e_coco-256x192')
-]
+val_evaluator = dict(
+    type='CocoMetricPSM',
+    outfile_prefix='logs/coco_final/td-hm_hrnet-w32_8xb64-210e_coco-256x192',
+    ann_file=data_root + 'annotations/person_keypoints_val2017.json')
 test_evaluator = val_evaluator

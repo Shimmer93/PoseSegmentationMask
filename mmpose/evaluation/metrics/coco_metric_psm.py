@@ -70,7 +70,7 @@ class PSMVisualizer:
             canvas = canvas[...,::-1]
         return canvas
 
-    def visualize_psm(self, save_path, img_path, input_size, input_center, input_scale, mask_body, mask_joint, mask_joints, mask_flow=None, fig_h=10, fig_w=10, nrows=4, ncols=5):
+    def visualize_psm(self, save_path, img_path, mask_body, mask_joint, mask_joints, mask_flow=None, input_size=None, input_center=None, input_scale=None, fig_h=10, fig_w=10, nrows=4, ncols=5):
         num_kps = mask_joints.shape[0]
         if mask_flow is not None:
             assert nrows * ncols >= num_kps + 4, f'{nrows} * {ncols} < {num_kps} + 4'
@@ -79,8 +79,11 @@ class PSMVisualizer:
 
         # for i in range(len(mask_body)):
         img = plt.imread(img_path)
-        warp_matrix = get_warp_matrix(input_center, input_scale, 0, input_size)
-        warped_img = cv2.warpAffine(img, warp_matrix, input_size, flags=cv2.INTER_LINEAR)
+        if input_size is None:
+            warped_img = img
+        else:
+            warp_matrix = get_warp_matrix(input_center, input_scale, 0, input_size)
+            warped_img = cv2.warpAffine(img, warp_matrix, input_size, flags=cv2.INTER_LINEAR)
         mask_body = self.mask_to_image(mask_body, 1)
         mask_joint = self.mask_to_image(mask_joint, num_kps)
         mask_joints = self.mask_to_joint_images(mask_joints, num_kps)
@@ -102,6 +105,8 @@ class PSMVisualizer:
 
 def write_psm(save_path, joint_masks, body_mask=None, obj_mask=None, rescale_ratio=1.0):
 
+    os.makedirs(save_path.rsplit('/', 1)[0], exist_ok=True)
+
     out_masks = joint_masks
     if body_mask is not None:
         out_masks = np.concatenate([out_masks, np.expand_dims(body_mask, axis=0)], axis=0)
@@ -111,7 +116,7 @@ def write_psm(save_path, joint_masks, body_mask=None, obj_mask=None, rescale_rat
     #                           mode='bilinear', align_corners=False).squeeze(0)
     h, w = out_masks.shape[-2:]
     out_masks = np.stack([cv2.resize(mask, dsize=(int(w/rescale_ratio), int(h/rescale_ratio)), interpolation=cv2.INTER_LINEAR) for mask in out_masks])
-    out_masks = ((out_masks > 0.5)*255).astype(np.uint8)
+    out_masks = (out_masks * 255).astype(np.uint8)
     J, H, W = out_masks.shape
 
     nw = 4
@@ -217,8 +222,13 @@ class CocoMetricPSM(BaseMetric):
                  collect_device: str = 'cpu',
                  prefix: Optional[str] = None,
                  vis: bool = True,
-                 save: bool = False) -> None:
+                 save: bool = False,
+                 use_flow=False) -> None:
         super().__init__(collect_device=collect_device, prefix=prefix)
+
+        if self.dataset_meta is None:
+            print('after super init')
+
         self.ann_file = ann_file
         # initialize coco helper with the annotation json file
         # if ann_file is not specified, initialize with the converted dataset
@@ -227,6 +237,9 @@ class CocoMetricPSM(BaseMetric):
                 self.coco = COCO(local_path)
         else:
             self.coco = None
+
+        if self.dataset_meta is None:
+            print('before use area')
 
         self.use_area = use_area
         self.iou_type = iou_type
@@ -270,7 +283,12 @@ class CocoMetricPSM(BaseMetric):
         self.visualizer = PSMVisualizer()
         self.vis = vis
         self.vis_flag = vis
+        self.count = 0
         self.save = save
+        self.use_flow = use_flow
+
+        if self.dataset_meta is None:
+            print('end of init')
 
     @property
     def dataset_meta(self) -> Optional[dict]:
@@ -279,6 +297,7 @@ class CocoMetricPSM(BaseMetric):
 
     @dataset_meta.setter
     def dataset_meta(self, dataset_meta: dict) -> None:
+        print('when????')
         """Set the dataset meta info to the metric."""
         if self.gt_converter is not None:
             dataset_meta['sigmas'] = transform_sigmas(
@@ -377,19 +396,33 @@ class CocoMetricPSM(BaseMetric):
                 input_scale = data_sample['input_scale']
 
                 mask_body = (F.sigmoid(masks[0]) > 0.5).float()
-                mask_joints = (F.sigmoid(masks[1:]) > 0.5).float()
+                mask_body = mask_body.numpy()
+                mask_body_raw = F.sigmoid(masks[0]).numpy()
+
+                if self.use_flow:
+                    mask_joints = (F.sigmoid(masks[1:-1]) > 0.5).float()
+                    mask_joints_raw = F.sigmoid(masks[1:-1]).numpy()
+                    mask_flow = (F.sigmoid(masks[-1]) > 0.5).float()
+                    mask_flow = mask_flow.numpy()
+                    mask_flow_raw = F.sigmoid(masks[-1]).numpy()
+                else:
+                    mask_joints = (F.sigmoid(masks[1:]) > 0.5).float()
+                    mask_joints_raw = F.sigmoid(masks[1:]).numpy()
+                    mask_flow = None
+                    mask_flow_raw = None
+
                 mask_joints_neg = (torch.max(mask_joints, dim=0, keepdim=True)[0] < 0.5).float()
                 mask_joint = torch.argmax(torch.cat([mask_joints_neg, mask_joints], dim=0), dim=0)
-                mask_body = mask_body.numpy()
                 mask_joint = mask_joint.numpy()
                 mask_joints = mask_joints.numpy()
 
                 if self.vis_flag:
-                    self.visualizer.visualize_psm(f'{self.outfile_prefix}/vis/{id}_{img_id}_{category_id}.png', img_path, input_size, input_center, input_scale, mask_body, mask_joint, mask_joints)
+                    self.visualizer.visualize_psm(f'{self.outfile_prefix}/vis/{self.count:03d}_{id}_{img_id}.png', img_path, \
+                                                  mask_body, mask_joint, mask_joints, mask_flow, input_size, input_center, input_scale)
                     self.vis_flag = False
 
                 if self.save:
-                    write_psm(f'{self.outfile_prefix}/results/{id}_{img_id}_{category_id}.png', mask_joint, mask_body, rescale_ratio=4.)
+                    write_psm(img_path.replace('2017/', '2017_psm/'), mask_joints_raw, mask_body_raw, mask_flow_raw, rescale_ratio=4.)
 
             # parse gt
             gt = dict()
@@ -522,7 +555,11 @@ class CocoMetricPSM(BaseMetric):
             Dict[str, float]: The computed metrics. The keys are the names of
             the metrics, and the values are corresponding results.
         """
+        if self.dataset_meta is None:
+            print('start of compute metrics')
+
         if self.vis:
+            self.count += 1
             self.vis_flag = True
 
         logger: MMLogger = MMLogger.get_current_instance()

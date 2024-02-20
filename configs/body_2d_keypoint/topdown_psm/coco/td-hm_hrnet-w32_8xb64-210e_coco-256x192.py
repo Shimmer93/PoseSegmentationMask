@@ -1,7 +1,7 @@
 _base_ = ['../../../_base_/default_runtime.py']
 
 # runtime
-train_cfg = dict(max_epochs=210, val_interval=10)
+train_cfg = dict(max_epochs=1, val_interval=1)
 
 # optimizer
 optim_wrapper = dict(optimizer=dict(
@@ -36,7 +36,7 @@ data_root = '/scratch/PI/cqf/har_data/coco/'
 
 # codec settings
 codec = dict(
-    type='PoseSegmentationMask', input_size=(192, 256), dataset_type=dataset_type, sigma=2)
+    type='PoseSegmentationMask', input_size=(192, 256), mask_size=(192, 256), dataset_type=dataset_type, sigma=2)
 
 # model settings
 model = dict(
@@ -148,6 +148,6 @@ test_dataloader = val_dataloader
 # evaluators
 val_evaluator = dict(
     type='CocoMetricPSM',
-    outfile_prefix='logs/coco4/td-hm_hrnet-w32_8xb64-210e_coco-256x192',
+    outfile_prefix='logs/coco_test/td-hm_hrnet-w32_8xb64-210e_coco-256x192',
     ann_file=data_root + 'annotations/person_keypoints_val2017.json')
 test_evaluator = val_evaluator
