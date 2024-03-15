@@ -55,14 +55,14 @@ def skeleton_to_body_mask(keypoints, links, height, width):
     masks = np.zeros((keypoints.shape[0], height, width))
     for i in range(keypoints.shape[0]):
         for kp_pair in links:
-            if kp_pair[0] + kp_pair[1] == 10 or kp_pair[0] + kp_pair[1] == 8:
-                continue
+            # if kp_pair[0] + kp_pair[1] == 10 or kp_pair[0] + kp_pair[1] == 8:
+            #     continue
             start = keypoints[i, kp_pair[0], :2].astype(np.int32)
             end = keypoints[i, kp_pair[1], :2].astype(np.int32)
             if start[0] < 0 or start[0] >= width or start[1] < 0 or start[1] >= height or \
                 end[0] < 0 or end[0] >= width or end[1] < 0 or end[1] >= height:
                 continue
-            draw_line(masks[i], start, end, value=1, overlength=0.1)
+            draw_line(masks[i], start, end, value=1, overlength=0)
         masks[i] = gaussian_filter(masks[i], sigma=3, radius=1)
     mask = np.sum(masks, axis=0)
     return mask
@@ -225,6 +225,7 @@ class HeatMapPoseSegmentationMask(BaseKeypointCodec):
 
     def __init__(self,
                  input_size: Tuple[int, int],
+                 heatmap_size: Tuple[int, int],
                  mask_size: Tuple[int, int],
                  sigma: float,
                  dataset_type: str,
@@ -233,6 +234,7 @@ class HeatMapPoseSegmentationMask(BaseKeypointCodec):
                  use_flow: bool = False) -> None:
         super().__init__()
         self.input_size = input_size
+        self.heatmap_size = heatmap_size
         self.mask_size = mask_size
         self.sigma = sigma
         self.unbiased = unbiased
@@ -243,6 +245,8 @@ class HeatMapPoseSegmentationMask(BaseKeypointCodec):
 
         self.scale_factor = (np.array(input_size) /
                              mask_size).astype(np.float32)
+        self.scale_hm_factor = (np.array(input_size) /
+                                heatmap_size).astype(np.float32)
 
     def encode(self,
                keypoints: np.ndarray,
@@ -281,24 +285,28 @@ class HeatMapPoseSegmentationMask(BaseKeypointCodec):
 
         if self.unbiased:
             heatmaps, keypoint_weights = generate_unbiased_gaussian_heatmaps(
-                heatmap_size=self.mask_size,
-                keypoints=keypoints / self.scale_factor,
+                heatmap_size=self.heatmap_size,
+                keypoints=keypoints / self.scale_hm_factor,
                 keypoints_visible=keypoints_visible,
                 sigma=self.sigma)
         else:
             heatmaps, keypoint_weights = generate_gaussian_heatmaps(
-                heatmap_size=self.mask_size,
-                keypoints=keypoints / self.scale_factor,
+                heatmap_size=self.heatmap_size,
+                keypoints=keypoints / self.scale_hm_factor,
                 keypoints_visible=keypoints_visible,
                 sigma=self.sigma)
 
         masks = np.concatenate([np.expand_dims(body_mask, axis=0), joint_mask], axis=0)
 
+        # Ugly workaround
+        heatmaps_ = np.zeros((heatmaps.shape[0], h, w))
+        heatmaps_[:, :self.heatmap_size[1], :self.heatmap_size[0]] = heatmaps
+
         # print(masks.shape, heatmaps.shape, keypoint_weights.shape)
 
         encoded = dict(
             masks=masks,
-            heatmaps=heatmaps,
+            heatmaps=heatmaps_,
             keypoint_weights=keypoint_weights,
         )
 

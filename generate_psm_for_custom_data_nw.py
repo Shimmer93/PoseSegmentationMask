@@ -15,6 +15,7 @@ import decord
 from time import time
 import pickle
 from collections import OrderedDict
+from glob2 import glob
 
 def mrlines(fname, sp='\n'):
     f = open(fname).read().split(sp)
@@ -44,7 +45,7 @@ except (ImportError, ModuleNotFoundError):
                       '`init_pose_model` form `mmpose.apis`. These apis are '
                       'required in this script! ')
 
-anno_path = 'ntu60_hrnet.pkl'
+anno_path = '/home/zpengac/har/PoseSegmentationMask/ntu120_hrnet.pkl'
 default_det_config = 'demo/mmdetection_cfg/rtmdet_tiny_8xb32-300e_coco.py'
 default_det_ckpt = (
     'logs/coco_final/rtmdet_tiny_8xb32-300e_coco_20220902_112414-78e30dcc.pth')
@@ -81,6 +82,7 @@ def detection_inference(model, frames, batch_size_det=16):
     # for frame in frames:
     #     result = inference_detector(model, frame)
     #     results.append(result)
+    # print(len(frames), frames[0].shape)
 
     batches = [frames[i:i+batch_size_det] for i in range(0, len(frames), batch_size_det)]
     results = []
@@ -156,7 +158,7 @@ def pose_inference(anno_in, model, frames, det_results, compress=False, batch_si
         pose_samples.extend(batch_pose_samples)
     # print(len(pose_samples))
     for i, pose_sample in enumerate(pose_samples):
-        save_path = anno['filename'].replace('.avi', f'/{i:03d}.png').replace('nturgb+d_rgb', 'nturgb+d_psm3')
+        save_path = anno['filename'].replace('.avi', f'/{i:03d}.png').replace('multiview_action_videos', 'psm').replace('/v', '_v')
         write_psm_from_pose_sample(save_path, pose_sample, rescale_ratio=4.0)
     # else:
     # kp = np.zeros((num_person, total_frames, 17, 3), dtype=np.float32)
@@ -220,12 +222,15 @@ def main():
     # else:
     #     annos = [dict(frame_dir=osp.basename(x[0]).split('.')[0], filename=x[0], label=int(x[1])) for x in lines]
 
-    with open(anno_path, 'rb') as f:
-        annos = pickle.load(f)['annotations']
-    for anno in annos:
-        anno['filename'] = f'/scratch/PI/cqf/har_data/ntu/nturgb+d_rgb/{anno["frame_dir"]}_rgb.avi'
-        anno['bboxes'] = get_bboxes_from_skeletons(anno['keypoint'], anno['img_shape'][0], anno['img_shape'][1])
+    # with open(anno_path, 'rb') as f:
+    #     annos = pickle.load(f)['annotations']
+    # for anno in annos:
+    #     anno['filename'] = f'/scratch/iotsense/har/ntu/nturgb+d_rgb/{anno["frame_dir"]}_rgb.avi'
+    #     anno['bboxes'] = get_bboxes_from_skeletons(anno['keypoint'], anno['img_shape'][0], anno['img_shape'][1])
 
+    fns = glob('/scratch/PI/cqf/har_data/nwucla/multiview_action_videos/*/*.avi')
+    fns = sorted(fns)
+    annos = [{'filename': fn} for fn in fns]
 
     print('Loading models...')
     if args.non_dist:
@@ -240,8 +245,8 @@ def main():
         my_part = annos[rank::world_size]
 
     # assert det_model.CLASSES[0] == 'person', 'A detector trained on COCO is required'
-    # det_model = init_detector(args.det_config, args.det_ckpt, 'cuda')
-    # det_model.cfg = adapt_mmdet_pipeline(det_model.cfg)
+    det_model = init_detector(args.det_config, args.det_ckpt, 'cuda')
+    det_model.cfg = adapt_mmdet_pipeline(det_model.cfg)
     pose_model = init_model(args.pose_config, args.pose_ckpt, 'cuda')
     flow_sd = torch.load(default_flow_ckpt, map_location='cpu')['state_dict']
     sd_flow_dec = OrderedDict()
@@ -260,32 +265,32 @@ def main():
     for anno in tqdm(my_part):
         if not osp.exists(anno['filename']):
             continue
+        if osp.exists(anno['filename'].replace('.avi', f'/000.png').replace('multiview_action_videos', 'psm').replace('/v', '_v')):
+            continue
         frames = extract_frame(anno['filename'])
-        frames_next = cp.deepcopy(frames)
-        frames_next.pop(0)
-        frames_next.append(frames[-1])
-        frames = [np.concatenate([frames[i], frames_next[i]], axis=-1) for i in range(len(frames))] 
-        # det_results = detection_inference(det_model, frames, batch_size_det=32)
-        # t_det = time()
+        
+        det_results = detection_inference(det_model, frames, batch_size_det=16)
         # * Get detection results for human
         # det_results = [x[0] for x in det_results]
-        # for i, det_sample in enumerate(det_results):
-        #     # * filter boxes with small scores
-        #     res = det_sample.pred_instances.bboxes.cpu().numpy()
-        #     scores = det_sample.pred_instances.scores.cpu().numpy()
-        #     res = res[scores >= args.det_score_thr]
-        #     # * filter boxes with small areas
-        #     box_areas = (res[:, 3] - res[:, 1]) * (res[:, 2] - res[:, 0])
-        #     assert np.all(box_areas >= 0)
-        #     res = res[box_areas >= args.det_area_thr]
-        #     det_results[i] = res
-        # t_det_filter = time()
-
-        det_results = anno['bboxes']
+        for i, det_sample in enumerate(det_results):
+            # * filter boxes with small scores
+            res = det_sample.pred_instances.bboxes.cpu().numpy()
+            scores = det_sample.pred_instances.scores.cpu().numpy()
+            res = res[scores >= args.det_score_thr]
+            # * filter boxes with small areas
+            box_areas = (res[:, 3] - res[:, 1]) * (res[:, 2] - res[:, 0])
+            assert np.all(box_areas >= 0)
+            res = res[box_areas >= args.det_area_thr]
+            det_results[i] = res
 
         n_frames = min(len(frames), len(det_results))
         frames = frames[:n_frames]
         det_results = det_results[:n_frames]
+
+        frames_next = cp.deepcopy(frames)
+        frames_next.pop(0)
+        frames_next.append(frames[-1])
+        frames = [np.concatenate([frames[i], frames_next[i]], axis=-1) for i in range(len(frames))] 
 
         shape = frames[0].shape[:2]
         anno['img_shape'] = shape

@@ -11,6 +11,10 @@ from mmpose.utils.typing import (ConfigType, InstanceList, OptConfigType,
                                  OptMultiConfig, PixelDataList, SampleList)
 from .base import BasePoseEstimator
 
+import matplotlib.pyplot as plt
+import os
+
+count = 0
 
 @MODELS.register_module()
 class TopdownPoseEstimatorPSM(BasePoseEstimator):
@@ -59,6 +63,8 @@ class TopdownPoseEstimatorPSM(BasePoseEstimator):
             data_preprocessor=data_preprocessor,
             init_cfg=init_cfg,
             metainfo=metainfo)
+
+        # os.makedirs('./input', exist_ok=True)
         
         self.flownet = MODELS.build(flownet)
         self.backbone_flow = MODELS.build(backbone_flow)
@@ -89,9 +95,16 @@ class TopdownPoseEstimatorPSM(BasePoseEstimator):
             tuple[Tensor]: Multi-level features that may have various
             resolutions.
         """
+        global count
+        count += 1
         self.flownet.eval()
 
         x0, x1 = inputs[:, :3, ...], inputs[:, 3:, ...]
+        # for i, x in enumerate(x0):
+        #     x_denormalized = x * torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1).to(x.device) + torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1).to(x.device)
+        #     x_ = x_denormalized.permute(1, 2, 0).cpu().numpy()
+        #     x_ = (x_ * 255).astype('uint8')
+        #     plt.imsave(f'./input/{count}_{i}.png', x_)
         with torch.no_grad():
             flow = self.flownet(x0, x1)[-1].detach()
             flow_mean = torch.mean(flow, dim=(2, 3), keepdim=True)

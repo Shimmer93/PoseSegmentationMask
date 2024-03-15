@@ -12,7 +12,7 @@ from .regression_loss import (BoneLoss, L1Loss, MPJPELoss,
                               MPJPEVelocityJointLoss, MSELoss, OKSLoss,
                               RLELoss, SemiSupervisionLoss, SmoothL1Loss,
                               SoftWeightSmoothL1Loss, SoftWingLoss, WingLoss)
-from .psm_loss import BodySegTrainLoss, JointSegTrainLoss, JointSegTrainLoss2
+from .psm_loss import BodySegTrainLoss, JointSegTrainLoss, JointSegTrainLoss2, JointSegTrainLoss3, UnsupFlowLoss, KeypointFlowLoss
 
 __all__ = [
     'KeypointMSELoss', 'KeypointOHKMMSELoss', 'SmoothL1Loss', 'WingLoss',
@@ -21,5 +21,5 @@ __all__ = [
     'KLDiscretLoss', 'MultipleLossWrapper', 'JSDiscretLoss', 'CombinedLoss',
     'AssociativeEmbeddingLoss', 'SoftWeightSmoothL1Loss',
     'MPJPEVelocityJointLoss', 'FeaLoss', 'KDLoss', 'OKSLoss', 'IoULoss',
-    'VariFocalLoss', 'MLECCLoss', 'BodySegTrainLoss', 'JointSegTrainLoss', 'JointSegTrainLoss2'
+    'VariFocalLoss', 'MLECCLoss', 'BodySegTrainLoss', 'JointSegTrainLoss', 'JointSegTrainLoss2', 'JointSegTrainLoss3', 'UnsupFlowLoss', 'KeypointFlowLoss'
 ]

@@ -181,19 +181,19 @@ class PSMMetricWrapper(BaseMetric):
                     input_center = None
                     input_scale = None
 
-                mask_body = (F.sigmoid(masks[0]) > 0.5).float()
+                mask_body = (masks[0] > 0.5).float()
                 mask_body = mask_body.numpy()
-                mask_body_raw = F.sigmoid(masks[0]).numpy()
+                mask_body_raw = masks[0].numpy()
 
                 if self.use_flow:
-                    mask_joints = (F.sigmoid(masks[1:-1]) > 0.5).float()
-                    mask_joints_raw = F.sigmoid(masks[1:-1]).numpy()
-                    mask_flow = (F.sigmoid(masks[-1]) > 0.5).float()
+                    mask_joints = (masks[1:-1] > 0.5).float()
+                    mask_joints_raw = masks[1:-1].numpy()
+                    mask_flow = (masks[-1] > 0.5).float()
                     mask_flow = mask_flow.numpy()
-                    mask_flow_raw = F.sigmoid(masks[-1]).numpy()
+                    mask_flow_raw = masks[-1].numpy()
                 else:
-                    mask_joints = (F.sigmoid(masks[1:]) > 0.5).float()
-                    mask_joints_raw = F.sigmoid(masks[1:]).numpy()
+                    mask_joints = (masks[1:] > 0.5).float()
+                    mask_joints_raw = masks[1:].numpy()
                     mask_flow = None
                     mask_flow_raw = None
 
