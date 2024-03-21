@@ -130,10 +130,11 @@ class JhmdbFlowDataset(BaseCocoStyleDataset):
             image_list.append(img)
 
             ann_ids = self.coco.getAnnIds(imgIds=img_id)
-            for ann in self.coco.loadAnns(ann_ids):
+            ann_ids2 = self.coco.getAnnIds(imgIds=img_id2)
+            for ann, ann2 in zip(self.coco.loadAnns(ann_ids), self.coco.loadAnns(ann_ids2)):
 
                 instance_info = self.parse_data_info(
-                    dict(raw_ann_info=ann, raw_img_info=img))
+                    dict(raw_ann_info=ann, raw_ann2_info=ann2, raw_img_info=img))
 
                 # skip invalid instance annotation.
                 if not instance_info:
@@ -158,6 +159,7 @@ class JhmdbFlowDataset(BaseCocoStyleDataset):
         """
 
         ann = raw_data_info['raw_ann_info']
+        ann2 = raw_data_info['raw_ann2_info']
         img = raw_data_info['raw_img_info']
 
         img_path = osp.join(self.data_prefix['img'], img['file_name'])
@@ -184,6 +186,16 @@ class JhmdbFlowDataset(BaseCocoStyleDataset):
         keypoints = _keypoints[..., :2] - 1
         keypoints_visible = np.minimum(1, _keypoints[..., 2])
 
+        if not self.test_mode:
+            _keypoints2 = np.array(
+                ann2['keypoints'], dtype=np.float32).reshape(1, -1, 3)
+            keypoints2 = _keypoints2[..., :2] - 1
+            keypoints_visible2 = np.minimum(1, _keypoints2[..., 2])
+
+            keypoints = np.concatenate([keypoints, keypoints2], axis=-2)
+            keypoints_visible = np.concatenate(
+                [keypoints_visible, keypoints_visible2], axis=-1)
+        
         num_keypoints = np.count_nonzero(keypoints.max(axis=2))
         area = np.clip((x2 - x1) * (y2 - y1) * 0.53, a_min=1.0, a_max=None)
         category_id = ann.get('category_id', [1] * len(keypoints))

@@ -532,7 +532,7 @@ class ImplicitPointRendMaskHead(nn.Module):
         return point_fine_grained_features
 
     def _subdivision_inference(self, features):
-        assert not self.training
+        # assert not self.training
 
         mask_point_subdivision_num_points = features.shape[-2] * features.shape[-1] // (self.feat_scale ** 2)
         mask_logits = None
@@ -606,7 +606,10 @@ class BodyMaskHead(ImplicitPointRendMaskHead):
                 point_fine_grained_features, point_coords
             )
 
-            return point_logits, point_labels
+            with torch.no_grad():
+                masks_body = F.sigmoid(self._subdivision_inference(features.clone().detach()))
+
+            return (point_logits, point_labels), masks_body
         else:
             return F.sigmoid(self._subdivision_inference(features))
     
@@ -707,6 +710,7 @@ class JointMaskHead(ImplicitPointRendMaskHead):
                 point_logits = self._get_point_logits(
                     point_features_new, point_coords
                 )
+                assert point_logits.shape[-1] == point_labels.shape[-1], f'{point_logits.shape[-1]} != {point_labels.shape[-1]}'
                 point_logits_list.append(point_logits)
                 point_labels_list.append(point_labels)
 
@@ -749,13 +753,13 @@ class JointMaskHead(ImplicitPointRendMaskHead):
                 # indices_pad = torch.clamp(indices_pad, min=0, max=(H+2*padding)*(W+2*padding)-1)
 
             #     # print(masks_pad[:, j].shape, indices_pad.shape, mask_box.shape)
-                masks_pad_j = masks_pad[:, j].reshape(B, -1)
+                masks_pad_j = masks_pad[:, j].reshape(B, -1).clone()
                 # print(indices_pad.max().item(), indices_pad.min().item(), masks_pad_j.size(1))
                 masks_pad_j.scatter_(1, indices_pad.long(), mask_box)
                 masks_pad[:, j] = masks_pad_j.reshape(B, H+2*padding-1, W+2*padding-1)
 
                 # print(masks_pad[0,0,0,0])
-                plt.imsave(f'./mask_vis/joint_{j}.png', masks_pad[0, j].detach().cpu().numpy())
+                # plt.imsave(f'./mask_vis/joint_{j}.png', masks_pad[0, j].detach().cpu().numpy())
                 # masks_pad[:, j] = (
                 #     masks_pad[:, j].reshape(B, -1)
                 #     .scatter_(1, indices_pad.long(), mask_box)
@@ -780,11 +784,21 @@ class JointMaskHead(ImplicitPointRendMaskHead):
         mx = (mx / (w-1)) * 2 - 1
         my = (my / (h-1)) * 2 - 1
 
+        num_pos_samples = 40
+        num_neg_samples = 800
+        
         pos_mask = (mx ** 2 + my ** 2) <= 0.3 ** 2
         pos_idxs = torch.nonzero(pos_mask).flip(1)
+        while len(pos_idxs) < num_pos_samples:
+            pos_idxs = torch.cat([pos_idxs, pos_idxs], dim=0)
+        pos_idxs = pos_idxs[torch.randperm(len(pos_idxs)),:][:num_pos_samples]
         pos_lbls = torch.ones(len(pos_idxs), device=features.device)
+
         neg_mask = (mx ** 2 + my ** 2) > 0.5 ** 2
         neg_idxs = torch.nonzero(neg_mask).flip(1)
+        while len(neg_idxs) < num_neg_samples:
+            neg_idxs = torch.cat([neg_idxs, neg_idxs], dim=0)
+        neg_idxs = neg_idxs[torch.randperm(len(neg_idxs)),:][:num_neg_samples]
         neg_lbls = torch.zeros(len(neg_idxs), device=features.device)
 
         point_coords = torch.cat([pos_idxs, neg_idxs], dim=0).unsqueeze(0).repeat(features.shape[0], 1, 1)
@@ -799,7 +813,7 @@ class FlowMaskHead(ImplicitPointRendMaskHead):
         super().__init__(in_channels, train_num_points, subdivision_steps, scale, \
                  num_layers, channels, image_feature_enabled, positional_encoding_enabled, num_classes)
 
-    def forward(self, features, flows=None, mode='fit'):
+    def forward(self, features, flows=None, masks_body=None, mode='fit'):
         """
         Args:
             features: B C H W
@@ -807,7 +821,7 @@ class FlowMaskHead(ImplicitPointRendMaskHead):
         if mode == 'fit':
             # parameters = self.parameter_head(self._roi_pooler(features))
 
-            point_coords, point_labels = self._sample_train_points_with_flow(features, flows)
+            point_coords, point_labels = self._sample_train_points_with_flow(features, flows, masks_body)
             point_fine_grained_features = self._point_pooler(features, point_coords)
             point_logits = self._get_point_logits(
                 point_fine_grained_features, point_coords
@@ -818,7 +832,7 @@ class FlowMaskHead(ImplicitPointRendMaskHead):
             # parameters = self.parameter_head(self._roi_pooler(features))
             return F.sigmoid(self._subdivision_inference(features))
 
-    def _sample_train_points_with_flow(self, features, flows):
+    def _sample_train_points_with_flow(self, features, flows, masks_body):
         assert self.training
 
         hf = features.shape[-2]
@@ -827,7 +841,10 @@ class FlowMaskHead(ImplicitPointRendMaskHead):
         h = int(hf // self.scale)
         w = int(wf // self.scale)
 
-        flows_mean = torch.mean(flows, dim=(2, 3), keepdim=True)
+        masks_nobody = (masks_body < 0.5)
+        flows_nobody = flows * masks_nobody.float()
+
+        flows_mean = torch.mean(flows_nobody, dim=(2, 3), keepdim=True)
         flows_centered = flows - flows_mean
         flows_centered_norm = torch.norm(flows_centered, dim=1, keepdim=True)
         flows_centered_norm_max = flows_centered_norm.flatten(2).max(dim=2)[0].unsqueeze(1).unsqueeze(1)
@@ -1033,14 +1050,18 @@ class HeatMapPointHead(BaseHead):
 
         # print(x_body.shape, x_joint.shape, skls.shape, gt_masks.shape)
         ret_body = self.body_head(x_body, skls=skls_, gt_masks=gt_masks_body, mode=mode)
-        ret_joint = self.joint_head(x_joint, skls=keypoints, gt_masks=gt_masks_joints, mode=mode)
+        masks_body = ret_body[-1] if mode == 'fit' else None
+        skls__ = skls_.to(x.device) if mode == 'fit' else keypoints.to(x.device)
+        # print(skls__.shape)
+        assert skls__.shape == keypoints.shape, f'{skls__.shape}, {keypoints.shape}'
+        ret_joint = self.joint_head(x_joint, skls=skls__, gt_masks=gt_masks_joints, mode=mode)
         if self.use_flow:
-            ret_flow = self.flow_head(x_flow, flows=flows, mode=mode)
+            ret_flow = self.flow_head(x_flow, flows=flows, masks_body=masks_body, mode=mode)
 
         if mode == 'fit':
             if self.use_flow:
-                return ret_body, ret_joint, (heatmaps, gt_heatmaps), ret_flow
-            return ret_body, ret_joint, (heatmaps, gt_heatmaps)
+                return ret_body[0], ret_joint, (heatmaps, gt_heatmaps), ret_flow
+            return ret_body[0], ret_joint, (heatmaps, gt_heatmaps)
         else:
             if self.use_flow:
                 return torch.cat([ret_body, ret_joint, ret_flow], dim=1)
@@ -1120,9 +1141,9 @@ class HeatMapPointHead(BaseHead):
         gt_heatmaps = torch.stack(
             [d.gt_fields.heatmaps for d in batch_data_samples])
         gt_heatmaps = gt_heatmaps[:, :, :gt_masks.shape[-2]//4, :gt_masks.shape[-1]//4].to(torch.float32)
-        # keypoints = torch.stack(
-        #     [torch.from_numpy(d.gt_instances.keypoints) for d in batch_data_samples])
-        keypoints = None
+        keypoints = torch.stack(
+            [torch.from_numpy(d.gt_instances.keypoints) for d in batch_data_samples])
+        # keypoints = None
         keypoint_weights = torch.cat([
             d.gt_instance_labels.keypoint_weights for d in batch_data_samples
         ])  

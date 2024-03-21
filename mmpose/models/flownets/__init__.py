@@ -1,4 +1,16 @@
 from .raft import RAFT
+from .FlowFormer import FlowFormer
 # from .gaflow import GAFlow
 
-__all__ = ['RAFT']
+# @MODELS.register_module()
+# class FlowFormer(nn.Module):
+#     def __init__(self, args_dict):
+#         super(FlowFormer, self).__init__()
+#         self.args = Namespace(**args_dict)
+
+#         self.flowformer = build_flowformer(self.args)
+
+#     def forward(self, x):
+#         return self.flowformer(x)
+
+__all__ = ['RAFT', 'FlowFormer']

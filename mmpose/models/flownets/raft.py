@@ -48,14 +48,15 @@ class RAFT(nn.Module):
             self.cnet = BasicEncoder(output_dim=hdim+cdim, norm_fn='batch', dropout=self.args.dropout)
             self.update_block = BasicUpdateBlock(self.args, hidden_dim=hdim)
 
-        sd = torch.load(self.args.flow_model_path, map_location='cpu')
-        new_sd = OrderedDict()
-        for k, v in sd.items():
-            if k.startswith('module.'):
-                new_sd[k[7:]] = v
-            else:
-                new_sd[k] = v
-        self.load_state_dict(new_sd)
+        if self.args.flow_model_path is not None:
+            sd = torch.load(self.args.flow_model_path, map_location='cpu')
+            new_sd = OrderedDict()
+            for k, v in sd.items():
+                if k.startswith('module.'):
+                    new_sd[k[7:]] = v
+                else:
+                    new_sd[k] = v
+            self.load_state_dict(new_sd)
 
     def freeze_bn(self):
         for m in self.modules():

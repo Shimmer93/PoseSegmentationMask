@@ -90,7 +90,14 @@ def get_keypoint_weights(keypoints, keypoints_visible, height, width):
     return keypoint_weights
 
 def get_dataset_links(dataset_type):
-    return str_to_dataset[dataset_type]._load_metainfo()["skeleton_links"]
+    links = list(str_to_dataset[dataset_type]._load_metainfo()["skeleton_links"])
+    if 'Coco' in dataset_type:
+        links.remove((5, 11))
+        links.remove((6, 12))
+        links.append((5, 12))
+        links.append((6, 11))
+    return links
+        
 
 def get_dataset_joint_groups(dataset_type):
     if 'Jhmdb' in dataset_type:
@@ -219,7 +226,7 @@ class PoseSegmentationMask(BaseKeypointCodec):
     
 @KEYPOINT_CODECS.register_module()
 class HeatMapPoseSegmentationMask(BaseKeypointCodec):
-
+    instance_mapping_table = dict(keypoints='keypoints')
     label_mapping_table = dict(keypoint_weights='keypoint_weights', )
     field_mapping_table = dict(masks='masks', heatmaps='heatmaps')
 
@@ -240,7 +247,7 @@ class HeatMapPoseSegmentationMask(BaseKeypointCodec):
         self.unbiased = unbiased
 
         self.blur_kernel_size = blur_kernel_size
-        self.links = str_to_dataset[dataset_type]._load_metainfo()["skeleton_links"]
+        self.links = get_dataset_links(dataset_type)
         self.use_flow = use_flow
 
         self.scale_factor = (np.array(input_size) /
@@ -270,31 +277,40 @@ class HeatMapPoseSegmentationMask(BaseKeypointCodec):
         assert keypoints.shape[0] == 1, (
             f'{self.__class__.__name__} only support single-instance '
             'keypoint encoding')
-
+        
         if keypoints_visible is None:
             keypoints_visible = np.ones(keypoints.shape[:2], dtype=np.float32)
+
+        if self.use_flow:
+            kps0, kps1 = np.split(keypoints, 2, axis=1)
+            keypoints = np.concatenate([kps0, kps1], axis=0)
+        else:
+            kps0 = keypoints
 
         w, h = self.mask_size
         w_, h_ = self.input_size
-        body_mask = skeleton_to_body_mask(keypoints / self.scale_factor, self.links, h, w)
-        joint_mask = skeleton_to_joint_mask(keypoints / self.scale_factor, h, w)
+        body_mask = skeleton_to_body_mask(kps0 / self.scale_factor, self.links, h, w)
+        joint_mask = skeleton_to_joint_mask(kps0 / self.scale_factor, h, w)
         # keypoint_weights = get_keypoint_weights(keypoints, keypoints_visible, h_, w_)
 
         if keypoints_visible is None:
-            keypoints_visible = np.ones(keypoints.shape[:2], dtype=np.float32)
+            keypoints_visible = np.ones(kps0.shape[:2], dtype=np.float32)
 
         if self.unbiased:
             heatmaps, keypoint_weights = generate_unbiased_gaussian_heatmaps(
                 heatmap_size=self.heatmap_size,
-                keypoints=keypoints / self.scale_hm_factor,
+                keypoints=kps0 / self.scale_hm_factor,
                 keypoints_visible=keypoints_visible,
                 sigma=self.sigma)
         else:
             heatmaps, keypoint_weights = generate_gaussian_heatmaps(
                 heatmap_size=self.heatmap_size,
-                keypoints=keypoints / self.scale_hm_factor,
+                keypoints=kps0 / self.scale_hm_factor,
                 keypoints_visible=keypoints_visible,
                 sigma=self.sigma)
+            
+        if self.use_flow:
+            keypoint_weights, _ = np.split(keypoint_weights, 2, axis=-1)
 
         masks = np.concatenate([np.expand_dims(body_mask, axis=0), joint_mask], axis=0)
 
@@ -305,6 +321,7 @@ class HeatMapPoseSegmentationMask(BaseKeypointCodec):
         # print(masks.shape, heatmaps.shape, keypoint_weights.shape)
 
         encoded = dict(
+            keypoints=keypoints,
             masks=masks,
             heatmaps=heatmaps_,
             keypoint_weights=keypoint_weights,

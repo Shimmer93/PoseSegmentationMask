@@ -68,7 +68,7 @@ class TopdownPoseEstimatorPSM(BasePoseEstimator):
         
         self.flownet = MODELS.build(flownet)
         self.backbone_flow = MODELS.build(backbone_flow)
-        self.use_flow = use_flow
+        self.use_flow = use_flow                                                                            
 
         if noflow_ckpt_path is not None:
             ckpt = torch.load(noflow_ckpt_path, map_location='cpu')
@@ -97,7 +97,7 @@ class TopdownPoseEstimatorPSM(BasePoseEstimator):
         """
         global count
         count += 1
-        self.flownet.eval()
+        # self.flownet.eval()
 
         x0, x1 = inputs[:, :3, ...], inputs[:, 3:, ...]
         # for i, x in enumerate(x0):
@@ -110,12 +110,13 @@ class TopdownPoseEstimatorPSM(BasePoseEstimator):
             flow_mean = torch.mean(flow, dim=(2, 3), keepdim=True)
             flow_std = torch.std(flow, dim=(2, 3), keepdim=True)
             flow_ = (flow - flow_mean) / flow_std
-            flow_ = torch.cat((flow_, x0), dim=1)
+        # print(flow_.shape, x0.shape)
+        # flow_ = torch.cat((flow_, x0), dim=1)
 
         x_body = self.backbone(x0)
         if self.with_neck:
             x_body = self.neck(x_body)
-        x_flow = self.backbone_flow(flow_)
+        x_flow = self.backbone_flow(flow_.clone().detach())
 
         return x_body, x_flow, flow
 

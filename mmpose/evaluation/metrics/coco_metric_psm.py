@@ -238,9 +238,6 @@ class CocoMetricPSM(BaseMetric):
         else:
             self.coco = None
 
-        if self.dataset_meta is None:
-            print('before use area')
-
         self.use_area = use_area
         self.iou_type = iou_type
 
@@ -287,9 +284,6 @@ class CocoMetricPSM(BaseMetric):
         self.save = save
         self.use_flow = use_flow
 
-        if self.dataset_meta is None:
-            print('end of init')
-
     @property
     def dataset_meta(self) -> Optional[dict]:
         """Optional[dict]: Meta info of the dataset."""
@@ -297,7 +291,6 @@ class CocoMetricPSM(BaseMetric):
 
     @dataset_meta.setter
     def dataset_meta(self, dataset_meta: dict) -> None:
-        print('when????')
         """Set the dataset meta info to the metric."""
         if self.gt_converter is not None:
             dataset_meta['sigmas'] = transform_sigmas(
@@ -395,19 +388,19 @@ class CocoMetricPSM(BaseMetric):
                 input_center = data_sample['input_center']
                 input_scale = data_sample['input_scale']
 
-                mask_body = (F.sigmoid(masks[0]) > 0.5).float()
+                mask_body = (masks[0] > 0.5).float()
                 mask_body = mask_body.numpy()
-                mask_body_raw = F.sigmoid(masks[0]).numpy()
+                mask_body_raw = masks[0].numpy()
 
                 if self.use_flow:
-                    mask_joints = (F.sigmoid(masks[1:-1]) > 0.5).float()
-                    mask_joints_raw = F.sigmoid(masks[1:-1]).numpy()
-                    mask_flow = (F.sigmoid(masks[-1]) > 0.5).float()
+                    mask_joints = (masks[1:-1] > 0.5).float()
+                    mask_joints_raw = masks[1:-1].numpy()
+                    mask_flow = (masks[-1] > 0.5).float()
                     mask_flow = mask_flow.numpy()
-                    mask_flow_raw = F.sigmoid(masks[-1]).numpy()
+                    mask_flow_raw = masks[-1].numpy()
                 else:
-                    mask_joints = (F.sigmoid(masks[1:]) > 0.5).float()
-                    mask_joints_raw = F.sigmoid(masks[1:]).numpy()
+                    mask_joints = (masks[1:] > 0.5).float()
+                    mask_joints_raw = masks[1:].numpy()
                     mask_flow = None
                     mask_flow_raw = None
 

@@ -99,6 +99,8 @@ class JointSegTrainLoss3(nn.Module):
         for j, (point_logits, point_labels) in enumerate(zip(point_logits_list, point_labels_list)):
             # reduced_weight = torch.sum(target_weight, dim=1, keepdim=True) / target_weight.size(1)
             # print(point_logits[:, j][point_labels == 0].shape, point_labels[point_labels == 0].shape)
+            assert point_logits[:, j].shape == point_labels.shape, f'{point_logits[:, j].shape} != {point_labels.shape}'
+            # print(point_logits[:, j].shape, point_labels.shape)
             loss += self.criterion(point_logits[:, j], point_labels)
             # loss += 0.2 * torch.mean(self.criterion(point_logits[:, j][point_labels == 1], point_labels[point_labels == 1]))
             # loss += 0.8 * torch.mean(self.criterion(point_logits[:, j][point_labels == 0], point_labels[point_labels == 0]))
@@ -177,30 +179,75 @@ class UnsupFlowLoss(nn.Module):
 
         return warped_frm
     
+def EPE(flow_pred, flow_true, mask=None, real=False):
+
+    if real:
+        batch_size, _, h, w = flow_true.shape
+        flow_pred = F.interpolate(flow_pred, (h, w), mode='bilinear', align_corners=False)
+    else:
+        batch_size, _, h, w = flow_pred.shape
+        flow_true = F.interpolate(flow_true, (h, w), mode='area')
+    if mask != None:
+        return torch.norm(flow_pred - flow_true, 2, 1, keepdim=True)[mask].mean()
+    else:
+        return torch.norm(flow_pred - flow_true, 2, 1).mean()
+
+
+def EPE_all(flows_pred, flow_true, mask=None, weights=(0.005, 0.01, 0.02, 0.08, 0.32)):
+
+    loss = 0
+
+    for i in range(len(weights)):
+        loss += weights[i] * EPE(flows_pred[i], flow_true, mask, real=False)
+
+    return loss
+
+class EPELoss(nn.Module):
+    def __init__(self, gamma):
+        super(EPELoss, self).__init__()
+        self.gamma = gamma
+
+    def forward(self, pred_flows, flow, mask):
+        n_iters = len(pred_flows)
+        weights = [self.gamma ** (n_iters - i - 1) for i in range(n_iters)]
+        loss = EPE_all(pred_flows, flow, mask, weights)
+        return loss
+    
 @MODELS.register_module()
 class KeypointFlowLoss(nn.Module):
     def __init__(self, loss_weight=1.0, gamma=0.8):
         super(KeypointFlowLoss, self).__init__()
+        self.epe_loss = EPELoss(gamma)
         self.loss_weight = loss_weight
-        self.gamma = gamma
 
     def forward(self, pred_flows, kps, target_weight=None):
         gt_flow = torch.zeros_like(pred_flows[-1], device=pred_flows[-1].device)
+        B, J, H, W = gt_flow.size()
         
         kps0 = kps[:, 0, ...]
         kps1 = kps[:, 1, ...]
-        for i in range(kps0.size(0)):
-            for j in range(kps0.size(1)):
-                x0, y0 = kps0[i, j]
-                x1, y1 = kps1[i, j]
-                gt_flow[i, 0, int(y0), int(x0)] = x1 - x0
-                gt_flow[i, 1, int(y0), int(x0)] = y1 - y0
+        disps = kps1 - kps0
+        for i in range(B):
+            for kp0, kp1, disp in zip(kps0[i], kps1[i], disps[i]):
+                if kp0[0] < 0 or kp0[1] < 0 or kp1[0] < 0 or kp1[1] < 0:
+                    continue
+                if kp0[0] >= W or kp0[1] >= H or kp1[0] >= W or kp1[1] >= H:
+                    continue
+                gt_flow[i, :, int(kp0[1]), int(kp0[0])] = disp
 
-        gt_mask = (gt_flow.norm(dim=1) > 0)
-        loss = 0
-        for i in range(len(pred_flows)):
-            pos_pred = pred_flows[i].transpose(0, 1)[:, gt_mask]
-            pos_gt = gt_flow.transpose(0, 1)[:, gt_mask]
-            loss += F.mse_loss(pos_pred, pos_gt) * (self.gamma ** (len(pred_flows) - i - 1))
-        loss = torch.mean(loss)
+        gt_mask = (gt_flow.norm(dim=1, keepdim=True) > 0)
+        loss = self.epe_loss(pred_flows, gt_flow, gt_mask)
         return loss * self.loss_weight
+
+@MODELS.register_module()
+class FlowLoss(nn.Module):
+    def __init__(self, loss_weight=1.0, gamma=0.8):
+        super(FlowLoss, self).__init__()
+        self.sup_loss = KeypointFlowLoss(loss_weight, gamma)
+        self.unsup_loss = UnsupFlowLoss(gamma, loss_weight)
+        self.loss_weight = loss_weight
+
+    def forward(self, pred_flows, kps, frm0, frm1):
+        sup_loss = self.sup_loss(pred_flows, kps)
+        unsup_loss = self.unsup_loss(pred_flows, frm0, frm1)
+        return sup_loss + unsup_loss
