@@ -117,12 +117,12 @@ model = dict(
         train_num_points=256,
         subdivision_steps=2,
         scale=1/4,
-        pos_enc_enabled=False,
+        pos_enc_enabled=True,
         use_flow=True,
         loss=dict(type='MultipleLossWrapper', losses=[
              dict(type='BodySegTrainLoss', loss_weight=0.1, use_target_weight=True),
              dict(type='JointSegTrainLoss3', loss_weight=1, use_target_weight=True),
-             dict(type='KeypointMSELoss', loss_weight=1, use_target_weight=True),
+             dict(type='KeypointMSELoss', loss_weight=5, use_target_weight=True),
              dict(type='BodySegTrainLoss', loss_weight=0.1, use_target_weight=True)
              ]),
         decoder=codec))
@@ -152,7 +152,7 @@ val_pipeline = [
 
 # data loaders
 train_dataloader = dict(
-    batch_size=8,
+    batch_size=16,
     num_workers=2,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=True),
@@ -165,7 +165,7 @@ train_dataloader = dict(
         pipeline=train_pipeline,
     ))
 val_dataloader = dict(
-    batch_size=4,
+    batch_size=8,
     num_workers=2,
     persistent_workers=True,
     drop_last=False,
@@ -183,7 +183,7 @@ test_dataloader = val_dataloader
 
 # evaluators
 val_evaluator = [
-    dict(type='PSMMetricWrapper', use_flow=True, metric_config=dict(type='JhmdbPCKAccuracy', thr=0.2, norm_item=['bbox', 'torso']), outfile_prefix='logs/jhmdb_new6/td-hm_res50_8xb64-20e_jhmdb-sub1-256x256'),
+    dict(type='PSMMetricWrapper', use_flow=True, metric_config=dict(type='JhmdbPCKAccuracy', thr=0.2, norm_item=['bbox', 'torso']), outfile_prefix='logs/jhmdb_new9/td-hm_res50_8xb64-20e_jhmdb-sub1-256x256'),
 ]
 test_evaluator = val_evaluator
 

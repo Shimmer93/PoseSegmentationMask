@@ -784,7 +784,7 @@ class JointMaskHead(ImplicitPointRendMaskHead):
         mx = (mx / (w-1)) * 2 - 1
         my = (my / (h-1)) * 2 - 1
 
-        num_pos_samples = 40
+        num_pos_samples = 50
         num_neg_samples = 800
         
         pos_mask = (mx ** 2 + my ** 2) <= 0.3 ** 2
@@ -1152,6 +1152,7 @@ class HeatMapPointHead(BaseHead):
 
         input_list = []
         target_list = []
+        name_list = ['body', 'joint', 'loc', 'flow']
 
         for i, ret in enumerate(rets):
             # print(i, ret[0].shape, ret[1].shape)
@@ -1165,13 +1166,13 @@ class HeatMapPointHead(BaseHead):
 
         loss_list = self.loss_module(input_list, target_list, keypoint_weights)
 
-        loss = 0
-        for i, loss_i in enumerate(loss_list):
-            # print(f'loss {i}: {loss_i.item():.3f}', end=' ')
-            loss += loss_i
+        # loss = 0
+        # for i, loss_i in enumerate(loss_list):
+        #     # print(f'loss {i}: {loss_i.item():.3f}', end=' ')
+        #     loss += loss_i
         # print()
-
-        losses.update(loss_kpt=loss)
+        for i, loss_i in enumerate(loss_list):
+            losses[f'loss_{name_list[i]}'] = loss_i
 
         # print(time.time())
 
