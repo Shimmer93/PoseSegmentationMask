@@ -8,4 +8,4 @@
 #SBATCH --cpus-per-task=16
 ##SBATCH --nodelist=hhnode-ib-140
 
-srun bash tools/dist_run.sh generate_psm_for_custom_data_nw.py 8 --video-list ucf101_videos.list
+srun bash tools/dist_run.sh generate_psm_for_custom_data.py 8 --video-list ucf101_videos.list

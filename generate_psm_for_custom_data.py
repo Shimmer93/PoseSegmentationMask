@@ -48,11 +48,11 @@ anno_path = 'ntu60_hrnet.pkl'
 default_det_config = 'demo/mmdetection_cfg/rtmdet_tiny_8xb32-300e_coco.py'
 default_det_ckpt = (
     'logs/coco_final/rtmdet_tiny_8xb32-300e_coco_20220902_112414-78e30dcc.pth')
-default_pose_config = 'configs/body_2d_keypoint/topdown_psm_flow/coco/td-hm_hrnet-w32_8xb64-210e_coco-256x192_inference.py'
+default_pose_config = 'configs/body_2d_keypoint/topdown_psm_flow/coco/td-hm_hrnet-w32_8xb64-210e_coco-256x192_new_inference.py'
 default_pose_ckpt = (
-    'logs/coco_final/best_coco_AP_epoch_180.pth')
+    'logs/coco_new2/best_coco_AP_epoch_150.pth')
 default_flow_ckpt = (
-    'logs/jhmdb_final5/best_PCK_epoch_100.pth')
+    'logs/jhmdb_new8/best_PCK_epoch_73.pth')
 
 def get_bboxes_from_skeletons(skls, H, W, padding=10):
     y_mins = np.min(skls[..., 1], axis=(0, -1)).astype(int)
@@ -121,14 +121,14 @@ def write_psm(save_path, joint_masks, body_mask=None, obj_mask=None, rescale_rat
 def write_psm_from_pose_sample(save_path, pose_sample: PoseDataSample, rescale_ratio=1.0):
     masks = pose_sample.pred_fields.heatmaps.detach().cpu()
 
-    mask_body = (F.sigmoid(masks[0]) > 0.5).float()
+    mask_body = (masks[0] > 0.5).float()
     mask_body = mask_body.numpy()
-    mask_body_raw = (F.sigmoid(masks[0]) > 0.5).float().numpy()
-    mask_joints = (F.sigmoid(masks[1:-1]) > 0.5).float()
-    mask_joints_raw = (F.sigmoid(masks[1:-1]) > 0.5).float().numpy()
-    mask_flow = (F.sigmoid(masks[-1]) > 0.5).float()
+    mask_body_raw = (masks[0] > 0.5).float().numpy()
+    mask_joints = (masks[1:-1] > 0.5).float()
+    mask_joints_raw = (masks[1:-1] > 0.5).float().numpy()
+    mask_flow = (masks[-1] > 0.5).float()
     mask_flow = mask_flow.numpy()
-    mask_flow_raw = (F.sigmoid(masks[-1]) > 0.5).float().numpy()
+    mask_flow_raw = (masks[-1] > 0.5).float().numpy()
     mask_joints_neg = (torch.max(mask_joints, dim=0, keepdim=True)[0] < 0.5).float()
     mask_joint = torch.argmax(torch.cat([mask_joints_neg, mask_joints], dim=0), dim=0)
     mask_joint = mask_joint.numpy()
@@ -156,7 +156,7 @@ def pose_inference(anno_in, model, frames, det_results, compress=False, batch_si
         pose_samples.extend(batch_pose_samples)
     # print(len(pose_samples))
     for i, pose_sample in enumerate(pose_samples):
-        save_path = anno['filename'].replace('.avi', f'/{i:03d}.png').replace('nturgb+d_rgb', 'nturgb+d_psm3')
+        save_path = anno['filename'].replace('.avi', f'/{i:03d}.png').replace('nturgb+d_rgb', 'nturgb+d_psm4')
         write_psm_from_pose_sample(save_path, pose_sample, rescale_ratio=4.0)
     # else:
     # kp = np.zeros((num_person, total_frames, 17, 3), dtype=np.float32)

@@ -6,7 +6,7 @@ train_cfg = dict(max_epochs=210, val_interval=10)
 # optimizer
 optim_wrapper = dict(optimizer=dict(
     type='Adam',
-    lr=1e-3,
+    lr=5e-4,
 ))
 
 # learning policy
@@ -33,13 +33,13 @@ data_root = '/scratch/PI/cqf/har_data/coco/'
 
 # codec settings
 codec = dict(
-    type='HeatMapPoseSegmentationMask', input_size=(192, 256), heatmap_size=(48, 64), mask_size=(192, 256), dataset_type=dataset_type, sigma=3, use_flow=False)
+    type='HeatMapPoseSegmentationMask', input_size=(256, 256), heatmap_size=(64, 64), mask_size=(256, 256), dataset_type=dataset_type, sigma=3, use_flow=True)
 
 # model settings
 model = dict(
     type='TopdownPoseEstimatorPSM',
     data_preprocessor=dict(
-        type='PoseDataPreprocessor',
+        type='PoseFlowDataPreprocessor',
         mean=[123.675, 116.28, 103.53],
         std=[58.395, 57.12, 57.375],
         bgr_to_rgb=True),
@@ -106,7 +106,7 @@ model = dict(
             'pretrain_models/hrnet_w32-36af842e.pth'),
     ),
     head=dict(
-        type='HeatMapPointHead',
+        type='PointHead',
         in_channels=32,
         out_channels=17,
         num_layers=3,
@@ -114,14 +114,14 @@ model = dict(
         train_num_points=256,
         subdivision_steps=2,
         scale=1/4,
-        use_flow=False,
+        use_flow=True,
         loss=dict(type='MultipleLossWrapper', losses=[
              dict(type='BodySegTrainLoss', loss_weight=0.1, use_target_weight=True),
              dict(type='JointSegTrainLoss3', loss_weight=1, use_target_weight=True),
              dict(type='KeypointMSELoss', loss_weight=5, use_target_weight=True),
              ]),
         decoder=codec),
-    use_flow=False,
+    use_flow=True,
     init_cfg=dict(
         type='Pretrained',
         checkpoint='/home/zpengac/pose/PoseSegmentationMask/logs/jhmdb_new8/best_PCK_epoch_73.pth'))
@@ -130,7 +130,7 @@ find_unused_parameters = True
 
 # pipelines
 train_pipeline = [
-    dict(type='LoadImage'),
+    dict(type='LoadImagePair'),
     dict(type='GetBBoxCenterScale'),
     dict(type='RandomFlip', direction='horizontal'),
     dict(type='RandomHalfBody'),
@@ -140,7 +140,7 @@ train_pipeline = [
     dict(type='PackPoseInputs')
 ]
 val_pipeline = [
-    dict(type='LoadImage'),
+    dict(type='LoadImagePair'),
     dict(type='GetBBoxCenterScale'),
     dict(type='TopdownAffine', input_size=codec['input_size']),
     dict(type='PackPoseInputs')
