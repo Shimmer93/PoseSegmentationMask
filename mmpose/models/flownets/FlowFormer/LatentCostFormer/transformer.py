@@ -37,8 +37,8 @@ class FlowFormer(nn.Module):
 
     def forward(self, image1, image2, output=None, flow_init=None):
         # Following https://github.com/princeton-vl/RAFT/
-        image1 = 2 * (image1 / 255.0) - 1.0
-        image2 = 2 * (image2 / 255.0) - 1.0
+        image1 = 2 * image1 - 1.0
+        image2 = 2 * image2 - 1.0
 
         data = {}
 
@@ -51,5 +51,5 @@ class FlowFormer(nn.Module):
 
         flow_predictions = self.memory_decoder(cost_memory, context, data, flow_init=flow_init)
         flow_predictions = list(flow_predictions)
-        flow_predictions[-1] = upflow8(flow_predictions[-1])
+        # flow_predictions[-1] = upflow8(flow_predictions[-1])
         return flow_predictions

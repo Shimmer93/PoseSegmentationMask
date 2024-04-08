@@ -15,6 +15,7 @@ import decord
 from time import time
 import pickle
 from collections import OrderedDict
+from mmpose.structures.bbox import get_warp_matrix
 
 def mrlines(fname, sp='\n'):
     f = open(fname).read().split(sp)
@@ -44,29 +45,31 @@ except (ImportError, ModuleNotFoundError):
                       '`init_pose_model` form `mmpose.apis`. These apis are '
                       'required in this script! ')
 
-anno_path = 'ntu60_hrnet.pkl'
+anno_path = '/home/zpengac/har/pyskl/data/hmdb51_hrnet.pkl'
 default_det_config = 'demo/mmdetection_cfg/rtmdet_tiny_8xb32-300e_coco.py'
 default_det_ckpt = (
     'logs/coco_final/rtmdet_tiny_8xb32-300e_coco_20220902_112414-78e30dcc.pth')
 default_pose_config = 'configs/body_2d_keypoint/topdown_psm_flow/coco/td-hm_hrnet-w32_8xb64-210e_coco-256x192_new_inference.py'
 default_pose_ckpt = (
-    'logs/coco_new2/best_coco_AP_epoch_150.pth')
+    'logs/coco_new2/best_coco_AP_epoch_190.pth')
 default_flow_ckpt = (
     'logs/jhmdb_new8/best_PCK_epoch_73.pth')
 
 def get_bboxes_from_skeletons(skls, H, W, padding=10):
-    y_mins = np.min(skls[..., 1], axis=(0, -1)).astype(int)
-    y_maxs = np.max(skls[..., 1], axis=(0, -1)).astype(int)
-    x_mins = np.min(skls[..., 0], axis=(0, -1)).astype(int)
-    x_maxs = np.max(skls[..., 0], axis=(0, -1)).astype(int)
+    # skls: N T J 2
+    y_mins = np.min(skls[..., 1], axis=-1).astype(int)
+    y_maxs = np.max(skls[..., 1], axis=-1).astype(int)
+    x_mins = np.min(skls[..., 0], axis=-1).astype(int)
+    x_maxs = np.max(skls[..., 0], axis=-1).astype(int)
 
     y_mins = np.clip(y_mins - padding, a_min=0, a_max=None)
     y_maxs = np.clip(y_maxs + padding, a_min=None, a_max=H)
     x_mins = np.clip(x_mins - padding, a_min=0, a_max=None)
     x_maxs = np.clip(x_maxs + padding, a_min=None, a_max=W)
 
-    bboxes = np.stack([x_mins, y_mins, x_maxs, y_maxs], axis=-1)
-    bboxes = np.expand_dims(bboxes, axis=1)
+    bboxes = np.stack([x_mins, y_mins, x_maxs, y_maxs], axis=-1) # N T 4
+    # bboxes = np.expand_dims(bboxes, axis=1) 
+    bboxes = bboxes.transpose(1, 0, 2)
     bboxes = [x for x in bboxes]
     
     return bboxes
@@ -102,6 +105,7 @@ def write_psm(save_path, joint_masks, body_mask=None, obj_mask=None, rescale_rat
     #                           mode='bilinear', align_corners=False).squeeze(0)
     h, w = out_masks.shape[-2:]
     out_masks = np.stack([cv2.resize(mask, dsize=(int(w/rescale_ratio), int(h/rescale_ratio)), interpolation=cv2.INTER_LINEAR) for mask in out_masks])
+    out_masks = (out_masks > 0).astype(np.uint8)
     out_masks = (out_masks * 255).astype(np.uint8)
     J, H, W = out_masks.shape
 
@@ -119,7 +123,24 @@ def write_psm(save_path, joint_masks, body_mask=None, obj_mask=None, rescale_rat
     Image.fromarray(canvas).save(save_path)
 
 def write_psm_from_pose_sample(save_path, pose_sample: PoseDataSample, rescale_ratio=1.0):
-    masks = pose_sample.pred_fields.heatmaps.detach().cpu()
+    # print(pose_sample[0].all_keys())
+    img_shape = pose_sample[0].img_shape
+    H, W = img_shape
+    warp_size = (int(W), int(H))
+    masks = 0
+    for i in range(len(pose_sample)):
+        input_size = pose_sample[i].input_size
+        input_center = pose_sample[i].input_center
+        input_scale = pose_sample[i].input_scale
+        w, h = input_size
+        warp_mat = get_warp_matrix(input_center, input_scale, 0., output_size=(w, h), inv=True)
+        mask = pose_sample[i].pred_fields.heatmaps.detach().cpu().permute(1, 2, 0).numpy()
+        # print('before: ', mask.shape)
+        mask = cv2.warpAffine(
+                    mask, warp_mat, warp_size, flags=cv2.INTER_LINEAR)
+        # print('after: ', mask.shape)
+        masks = masks + mask
+    masks = torch.from_numpy(masks).permute(2, 0, 1)
 
     mask_body = (masks[0] > 0.5).float()
     mask_body = mask_body.numpy()
@@ -146,17 +167,21 @@ def pose_inference(anno_in, model, frames, det_results, compress=False, batch_si
 
     # if compress:
     kp, frame_inds = [], []
-    data = list(zip(frames, det_results))
-    batches = [data[i:i+batch_size_pose] for i in range(0, len(frames), batch_size_pose)]
+    # data = list(zip(frames, det_results))
+    # batches = [data[i:i+batch_size_pose] for i in range(0, len(frames), batch_size_pose)]
     pose_samples = []
-    for batch in batches:
-        batch_frames, batch_det_results = zip(*batch)
-        # print(len(batch_frames), len(batch_det_results))
-        batch_pose_samples = inference_topdown_batch(model, batch_frames, batch_det_results, bbox_format='xyxy')
-        pose_samples.extend(batch_pose_samples)
+    # for batch in batches:
+    #     batch_frames, batch_det_results = zip(*batch)
+    #     # print(len(batch_frames), len(batch_det_results))
+    #     batch_pose_samples = inference_topdown_batch(model, batch_frames, batch_det_results, bbox_format='xyxy')
+    #     pose_samples.extend(batch_pose_samples)
+    for frame, det_result in zip(frames, det_results):
+        pose_sample = inference_topdown(model, frame, det_result, bbox_format='xyxy')
+        # print(det_result.shape, len(pose_sample))
+        pose_samples.append(pose_sample)
     # print(len(pose_samples))
     for i, pose_sample in enumerate(pose_samples):
-        save_path = anno['filename'].replace('.avi', f'/{i:03d}.png').replace('nturgb+d_rgb', 'nturgb+d_psm4')
+        save_path = anno['filename'].replace('.avi', f'/{i:03d}.png').replace('videos', 'psm_test')
         write_psm_from_pose_sample(save_path, pose_sample, rescale_ratio=4.0)
     # else:
     # kp = np.zeros((num_person, total_frames, 17, 3), dtype=np.float32)
@@ -223,7 +248,7 @@ def main():
     with open(anno_path, 'rb') as f:
         annos = pickle.load(f)['annotations']
     for anno in annos:
-        anno['filename'] = f'/scratch/PI/cqf/har_data/ntu/nturgb+d_rgb/{anno["frame_dir"]}_rgb.avi'
+        anno['filename'] = f'/scratch/iotsense/har/hmdb51/videos/{anno["frame_dir"]}.avi'
         anno['bboxes'] = get_bboxes_from_skeletons(anno['keypoint'], anno['img_shape'][0], anno['img_shape'][1])
 
 
@@ -289,7 +314,7 @@ def main():
 
         shape = frames[0].shape[:2]
         anno['img_shape'] = shape
-        anno = pose_inference(anno, pose_model, frames, det_results, compress=args.compress, batch_size_pose=16)
+        anno = pose_inference(anno, pose_model, frames, det_results, compress=args.compress, batch_size_pose=128)
         anno.pop('filename')
         results.append(anno)
 

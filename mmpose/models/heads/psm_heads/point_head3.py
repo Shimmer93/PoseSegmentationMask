@@ -844,6 +844,12 @@ class FlowMaskHead(ImplicitPointRendMaskHead):
         masks_nobody = (masks_body < 0.5)
         flows_nobody = flows * masks_nobody.float()
 
+        for i in range(flows_nobody.shape[0]):
+            flow_mean_y = torch.mean(flows_nobody[i,0][flows_nobody[i,0]>0])
+            flow_mean_x = torch.mean(flows_nobody[i,1][flows_nobody[i,1]>0])
+            flows_nobody[i,0][flows_nobody[i,0]==0] = flow_mean_y
+            flows_nobody[i,1][flows_nobody[i,1]==0] = flow_mean_x
+
         flows_mean = torch.mean(flows_nobody, dim=(2, 3), keepdim=True)
         flows_centered = flows - flows_mean
         flows_centered_norm = torch.norm(flows_centered, dim=1, keepdim=True)
@@ -1102,6 +1108,7 @@ class HeatMapPointHead(BaseHead):
                 - heatmaps (Tensor): The predicted heatmaps in shape (K, h, w)
         """
 
+        # print(batch_data_samples[0].)
         masks = self.forward(feats, feats_flow, mode='inference')
 
         preds = self.decode(masks)
