@@ -208,7 +208,7 @@ class PSMMetricWrapper(BaseMetric):
                     self.vis_flag = False
 
                 if self.save:
-                    write_psm(img_path.replace('Rename_Images', 'PSM_grouped'), mask_joints_raw, mask_body_raw, mask_flow_raw, rescale_ratio=4.)
+                    write_psm(img_path.replace('Rename_Images', 'PSM_v9'), mask_joints_raw, mask_body_raw, mask_flow_raw, rescale_ratio=4.)
 
     def compute_metrics(self, results: list) -> Dict[str, float]:
         if self.vis:
@@ -267,19 +267,19 @@ class PSMHeatMapMetricWrapper(BaseMetric):
                     input_center = None
                     input_scale = None
 
-                mask_body = (F.sigmoid(masks[0]) > 0.5).float()
+                mask_body = (masks[0] > 0.5).float()
                 mask_body = mask_body.numpy()
-                mask_body_raw = F.sigmoid(masks[0]).numpy()
+                mask_body_raw = mask_body
 
                 if self.use_flow:
                     mask_joints = (masks[1:-1] > 0.5).float()
-                    mask_joints_raw = (masks[1:-1] > 0.3).numpy()
-                    mask_flow = (F.sigmoid(masks[-1]) > 0.5).float()
+                    mask_joints_raw = (masks[1:-1] > 0.5).numpy()
+                    mask_flow = (masks[-1] > 0.5).float()
                     mask_flow = mask_flow.numpy()
-                    mask_flow_raw = F.sigmoid(masks[-1]).numpy()
+                    mask_flow_raw = masks[-1].numpy()
                 else:
                     mask_joints = (masks[1:] > 0.5).float()
-                    mask_joints_raw = (masks[1:] > 0.3).numpy()
+                    mask_joints_raw = (masks[1:] > 0.5).numpy()
                     mask_flow = None
                     mask_flow_raw = None
 
@@ -294,7 +294,7 @@ class PSMHeatMapMetricWrapper(BaseMetric):
                     self.vis_flag = False
 
                 if self.save:
-                    write_psm(img_path.replace('Rename_Images', 'PSM_v8'), mask_joints_raw, mask_body_raw, mask_flow_raw, rescale_ratio=1.)
+                    write_psm(img_path.replace('Rename_Images', 'PSM_v9'), mask_joints_raw, mask_body_raw, mask_flow_raw, rescale_ratio=1.)
 
     def compute_metrics(self, results: list) -> Dict[str, float]:
         if self.vis:

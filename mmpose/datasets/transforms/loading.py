@@ -130,7 +130,7 @@ class LoadImagePair(LoadImageFromFile):
                     results['img_path'] = None
                 results['img_shape'] = img.shape[:2]
                 results['ori_shape'] = img.shape[:2]
-            if 'flip_indices' in results:
+            if 'flip_indices' in results and 'flag' in results:
                 num_joints = len(results['flip_indices'])
                 add_flip_indices = [i+num_joints for i in results['flip_indices']]
                 results['flip_indices'].extend(add_flip_indices)

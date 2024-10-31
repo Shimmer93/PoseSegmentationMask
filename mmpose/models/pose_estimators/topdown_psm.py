@@ -256,3 +256,73 @@ class TopdownPoseEstimatorPSM(BasePoseEstimator):
                 data_sample.pred_fields = pred_fields
 
         return batch_data_samples
+
+@MODELS.register_module()
+class TestModel(TopdownPoseEstimatorPSM):
+    def __init__(self,
+                 backbone: ConfigType,
+                 neck: OptConfigType = None,
+                 head: OptConfigType = None,
+                 flownet: OptConfigType = None,
+                 backbone_flow: ConfigType = None,
+                 train_cfg: OptConfigType = None,
+                 test_cfg: OptConfigType = None,
+                 data_preprocessor: OptConfigType = None,
+                 init_cfg: OptMultiConfig = None,
+                 metainfo: Optional[dict] = None,
+                 noflow_ckpt_path = None,
+                 use_flow = True):
+        super().__init__(
+            backbone=backbone,
+            neck=neck,
+            head=head,
+            flownet=flownet,
+            backbone_flow=backbone_flow,
+            train_cfg=train_cfg,
+            test_cfg=test_cfg,
+            data_preprocessor=data_preprocessor,
+            init_cfg=init_cfg,
+            metainfo=metainfo,
+            noflow_ckpt_path=noflow_ckpt_path,
+            use_flow=use_flow)
+        
+    def extract_feat_with_flow(self, inputs: Tensor) -> Tuple[Tensor]:
+        """Extract features.
+
+        Args:
+            inputs (Tensor): Image tensor with shape (N, C, H ,W).
+
+        Returns:
+            tuple[Tensor]: Multi-level features that may have various
+            resolutions.
+        """
+        global count
+        count += 1
+        # self.flownet.eval()
+
+        x0, x1 = inputs[:, :3, ...], inputs[:, 3:, ...]
+        # for i, x in enumerate(x0):
+        #     x_denormalized = x * torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1).to(x.device) + torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1).to(x.device)
+        #     x_ = x_denormalized.permute(1, 2, 0).cpu().numpy()
+        #     x_ = (x_ * 255).astype('uint8')
+        #     plt.imsave(f'./input/{count}_{i}.png', x_)
+        with torch.no_grad():
+            x0_ = torch.nn.functional.interpolate(x0, scale_factor=0.5, mode='bilinear', align_corners=False)
+            x1_ = torch.nn.functional.interpolate(x1, scale_factor=0.5, mode='bilinear', align_corners=False)
+            flow = self.flownet(x0_, x1_)[-1].detach()
+            flow_mean = torch.mean(flow, dim=(2, 3), keepdim=True)
+            flow_std = torch.std(flow, dim=(2, 3), keepdim=True)
+            flow_ = (flow - flow_mean) / flow_std
+        # print(flow_.shape, x0.shape)
+        flow_ = torch.cat((flow_, x0_), dim=1)
+        flow_ = torch.nn.functional.interpolate(flow_, scale_factor=2, mode='bilinear', align_corners=False)
+        flow = torch.nn.functional.interpolate(flow, scale_factor=2, mode='bilinear', align_corners=False)
+
+        x_body = self.backbone(x0)
+        if self.with_neck:
+            x_body = self.neck(x_body)
+        x_flow = self.backbone_flow(flow_.clone().detach())
+
+        # print('emm: ', x_body[-1].shape, x_flow[-1].shape, flow.shape)
+
+        return x_body, x_flow, flow

@@ -521,7 +521,7 @@ class BodyMaskHead(ImplicitPointRendMaskHead):
 
             return point_logits, point_labels
         else:
-            return self._subdivision_inference(features)
+            return F.sigmoid(self._subdivision_inference(features))
     
     def _sample_train_points_with_skeleton(self, features, skls, gt_masks):
         assert self.training
@@ -605,7 +605,7 @@ class JointMaskHead(ImplicitPointRendMaskHead):
             )
             return point_logits, point_labels
         else:
-            return self._subdivision_inference(features)
+            return F.sigmoid(self._subdivision_inference(features))
         
     def _sample_train_points_with_skeleton2(self, features, skls, gt_masks):
         assert self.training

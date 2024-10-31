@@ -282,7 +282,6 @@ class HeatMapPoseSegmentationMask(BaseKeypointCodec):
             keypoints_visible = np.ones(keypoints.shape[:2], dtype=np.float32)
 
         if self.use_flow:
-            print(keypoints.shape)
             kps0, kps1 = np.split(keypoints, 2, axis=1)
             keypoints = np.concatenate([kps0, kps1], axis=0)
         else:

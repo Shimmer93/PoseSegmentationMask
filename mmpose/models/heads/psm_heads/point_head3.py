@@ -611,6 +611,7 @@ class BodyMaskHead(ImplicitPointRendMaskHead):
 
             return (point_logits, point_labels), masks_body
         else:
+            # print('body: ', features.shape)
             return F.sigmoid(self._subdivision_inference(features))
     
     def _sample_train_points_with_skeleton(self, features, skls, gt_masks):
@@ -830,6 +831,7 @@ class FlowMaskHead(ImplicitPointRendMaskHead):
             return point_logits, point_labels
         else:
             # parameters = self.parameter_head(self._roi_pooler(features))
+            # print('flow: ', features.shape)
             return F.sigmoid(self._subdivision_inference(features))
 
     def _sample_train_points_with_flow(self, features, flows, masks_body):
@@ -841,6 +843,8 @@ class FlowMaskHead(ImplicitPointRendMaskHead):
         h = int(hf // self.scale)
         w = int(wf // self.scale)
 
+        # print(masks_body.shape, flows.shape)
+        # flows = F.interpolate(flows, size=(h, w), mode='bilinear', align_corners=False) // self.scale
         masks_nobody = (masks_body < 0.5)
         flows_nobody = flows * masks_nobody.float()
 
@@ -1042,6 +1046,8 @@ class HeatMapPointHead(BaseHead):
         x_joint = self.joint_dec(x)
         if self.use_flow:
             x_flow = self.flow_dec(feats_flow[-1])
+
+            # print(x_body.shape, x_joint.shape, x_flow.shape)
 
         heatmaps = self.joint_heatmap_head(x_joint)
         # print(heatmaps.shape, gt_heatmaps.shape)

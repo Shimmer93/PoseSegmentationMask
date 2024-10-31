@@ -215,6 +215,7 @@ class JhmdbFlowDataset(BaseCocoStyleDataset):
             'segmentation': ann.get('segmentation', None),
             'id': ann['id'],
             'category_id': category_id,
+            'flag': 0,
         }
 
         return data_info

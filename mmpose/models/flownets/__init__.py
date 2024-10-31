@@ -1,5 +1,6 @@
 from .raft import RAFT
 from .FlowFormer import FlowFormer
+from .smurf import SMURF
 # from .gaflow import GAFlow
 
 # @MODELS.register_module()
@@ -13,4 +14,4 @@ from .FlowFormer import FlowFormer
 #     def forward(self, x):
 #         return self.flowformer(x)
 
-__all__ = ['RAFT', 'FlowFormer']
+__all__ = ['RAFT', 'FlowFormer', 'SMURF']
