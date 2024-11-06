@@ -299,7 +299,7 @@ class TestModel(TopdownPoseEstimatorPSM):
         global count
         count += 1
         # self.flownet.eval()
-
+        b = inputs.shape[0]
         x0, x1 = inputs[:, :3, ...], inputs[:, 3:, ...]
         # for i, x in enumerate(x0):
         #     x_denormalized = x * torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1).to(x.device) + torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1).to(x.device)
@@ -307,16 +307,32 @@ class TestModel(TopdownPoseEstimatorPSM):
         #     x_ = (x_ * 255).astype('uint8')
         #     plt.imsave(f'./input/{count}_{i}.png', x_)
         with torch.no_grad():
-            x0_ = torch.nn.functional.interpolate(x0, scale_factor=0.5, mode='bilinear', align_corners=False)
-            x1_ = torch.nn.functional.interpolate(x1, scale_factor=0.5, mode='bilinear', align_corners=False)
-            flow = self.flownet(x0_, x1_)[-1].detach()
+            if b % 4 != 0:
+                x0_ = torch.nn.functional.interpolate(x0, scale_factor=0.5, mode='bilinear', align_corners=False)
+                x1_ = torch.nn.functional.interpolate(x1, scale_factor=0.5, mode='bilinear', align_corners=False)
+                flow = self.flownet(x0_, x1_)[-1].detach()
+            else:
+                x0_ = torch.nn.functional.interpolate(x0, scale_factor=0.25, mode='bilinear', align_corners=False)
+                x1_ = torch.nn.functional.interpolate(x1, scale_factor=0.25, mode='bilinear', align_corners=False)
+                _, c, h, w = x0_.shape
+
+                x0_ = x0_.reshape(b//4, 2, 2, c, h, w).permute(0, 3, 1, 4, 2, 5).reshape(b//4, c, 2*h, 2*w)
+                x1_ = x1_.reshape(b//4, 2, 2, c, h, w).permute(0, 3, 1, 4, 2, 5).reshape(b//4, c, 2*h, 2*w)
+                    
+                flow = self.flownet(x0_, x1_)[-1].detach()
+                flow = flow.reshape(b//4, 2, 2, h, 2, w).permute(0, 2, 4, 1, 3, 5).reshape(b, 2, h, w)
             flow_mean = torch.mean(flow, dim=(2, 3), keepdim=True)
             flow_std = torch.std(flow, dim=(2, 3), keepdim=True)
             flow_ = (flow - flow_mean) / flow_std
         # print(flow_.shape, x0.shape)
-        flow_ = torch.cat((flow_, x0_), dim=1)
-        flow_ = torch.nn.functional.interpolate(flow_, scale_factor=2, mode='bilinear', align_corners=False)
-        flow = torch.nn.functional.interpolate(flow, scale_factor=2, mode='bilinear', align_corners=False)
+        # flow_ = torch.cat((flow_, x0_), dim=1)
+        if b % 4 != 0:
+            flow_ = torch.nn.functional.interpolate(flow_, scale_factor=2, mode='bilinear', align_corners=False)
+            flow = torch.nn.functional.interpolate(flow, scale_factor=2, mode='bilinear', align_corners=False)
+        else:
+            flow_ = torch.nn.functional.interpolate(flow_, scale_factor=4, mode='bilinear', align_corners=False)
+            flow = torch.nn.functional.interpolate(flow, scale_factor=4, mode='bilinear', align_corners=False)
+        flow_ = torch.cat((flow_, x0), dim=1)
 
         x_body = self.backbone(x0)
         if self.with_neck:
